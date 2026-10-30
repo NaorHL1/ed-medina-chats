@@ -1,5 +1,5 @@
 import type { ChatMetrics } from '../metrics/index.js';
-import { buildRegistry } from '../report/registry.js';
+import { buildRegistry, personValues } from '../report/registry.js';
 import { parseReport, type Card, type Report } from '../report/types.js';
 import { applyVerdicts, cardTexts, verifyReport, type Verdict, type VerifyContext } from '../report/verify.js';
 import type { Message } from '../types.js';
@@ -97,7 +97,7 @@ export function metricsForModel(metrics: ChatMetrics, personIds: Record<string, 
     conversations: metrics.conversations,
     replyAsymmetry: metrics.replyAsymmetry,
     longestStreakDays: metrics.longestStreakDays,
-    people: Object.fromEntries(Object.entries(metrics.people).map(([name, p]) => [idOf(name), p])),
+    people: Object.fromEntries(Object.entries(metrics.people).map(([name, p]) => [idOf(name), personValues(p)])),
     ghostGaps: metrics.ghostGaps.map((gap) => ({ ...gap, before: idOf(gap.before), brokeBy: idOf(gap.brokeBy) })),
   };
 }

@@ -29,7 +29,7 @@ export interface MetricRegistry {
   printable: Set<number>;
 }
 
-function personValues(person: PersonMetrics): Record<(typeof PERSON_KEYS)[number], number | null> {
+export function personValues(person: PersonMetrics): Record<(typeof PERSON_KEYS)[number], number | null> {
   return {
     messages: person.messages,
     words: person.words,
