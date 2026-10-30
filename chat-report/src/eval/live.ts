@@ -24,6 +24,7 @@ export interface LiveOutcome {
   removed: number;
   criticRounds: number;
   droppedIds: number;
+  reasons: string[];
 }
 
 export interface LiveSummary {
@@ -58,6 +59,7 @@ const emptyOutcome = (id: string, expected: LiveOutcome['expected'], result: Liv
   removed: 0,
   criticRounds: 0,
   droppedIds: 0,
+  reasons: [],
 });
 
 /** Runs the real pipeline on every case. Errors are recorded per case and never stop the loop. */
@@ -79,6 +81,7 @@ export async function runLive(
           removed: result.removed.length,
           criticRounds: result.criticRounds,
           droppedIds: result.droppedIds,
+          reasons: result.removed.map((r) => `${r.stage}: ${r.reason}`),
         });
       } else {
         outcomes.push(emptyOutcome(evalCase.id, expected, result.kind));
@@ -144,6 +147,7 @@ export async function main(env: NodeJS.ProcessEnv = process.env): Promise<number
   for (const o of summary.outcomes) {
     const detail = o.error ? ` error: ${o.error}` : ` cards=${o.cards} removed=${o.removed} critic=${o.criticRounds}`;
     process.stdout.write(`${o.id.padEnd(22)} expected=${o.expected.padEnd(6)} got=${o.result}${detail}\n`);
+    for (const reason of o.reasons) process.stdout.write(`    - ${reason}\n`);
   }
   process.stdout.write(
     `\ncompletion ${summary.completion}, care recall ${summary.careRecall}, care false alarms ${summary.careFalseAlarmRate}\n`,

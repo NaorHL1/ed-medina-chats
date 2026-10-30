@@ -69,6 +69,7 @@ describe('summarizeLive and failedLiveGates', () => {
     removed: 0,
     criticRounds: 0,
     droppedIds: 0,
+    reasons: [],
   });
 
   it('fails when a care case is missed', () => {

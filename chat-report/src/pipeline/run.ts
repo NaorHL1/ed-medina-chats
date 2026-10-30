@@ -220,22 +220,64 @@ function parseVerdicts(value: unknown): Verdict[] {
  * A chat with minor-sexual content stops here; a chat with medium or high care flags
  * gets the calm care report instead of the roast.
  */
+/** Messages per extractor request. Keeps each call well under the model's per-request input limit. */
+export const EXTRACTOR_CHUNK_SIZE = 100;
+/** Most messages the writer sees. The writer gets excerpts the bank cites, never the whole chat. */
+export const WRITER_EXCERPT_LIMIT = 150;
+
+export function chunkMessages(messages: Message[], size: number): Message[][] {
+  const chunks: Message[][] = [];
+  for (let start = 0; start < messages.length; start += size) chunks.push(messages.slice(start, start + size));
+  return chunks;
+}
+
+/** Joins two extractor banks: arrays concatenate, and a scalar keeps the first non-empty value. */
+export function mergeBanks(a: Json, b: Json): Json {
+  const merged: Json = { ...a };
+  for (const [key, value] of Object.entries(b)) {
+    const existing = merged[key];
+    if (Array.isArray(value) && Array.isArray(existing)) merged[key] = [...existing, ...value];
+    else if (existing === undefined || existing === null) merged[key] = value;
+  }
+  return merged;
+}
+
+/** Every message id the bank cites, found anywhere in its values. */
+function citedIds(node: unknown, found: Set<string> = new Set()): Set<string> {
+  if (typeof node === 'string' && /^m\d{5}$/.test(node)) found.add(node);
+  else if (Array.isArray(node)) node.forEach((item) => citedIds(item, found));
+  else if (isObject(node)) Object.values(node).forEach((value) => citedIds(value, found));
+  return found;
+}
+
+/** The writer's view of the chat: only messages the material bank cites, in transcript order, capped. */
+export function writerExcerpt(transcript: Message[], bank: Json, personIds: Record<string, string>): string {
+  const cited = citedIds(bank);
+  const excerpt = transcript.filter((m) => cited.has(m.id)).slice(0, WRITER_EXCERPT_LIMIT);
+  return excerpt.length > 0 ? transcriptLines(excerpt, personIds) : '(no excerpts cited)';
+}
+
 export async function runPipeline(input: PipelineInput): Promise<PipelineResult> {
   const { transcript, metrics, personIds, client } = input;
-  const ids = new Set(transcript.map((m) => m.id));
   const personIdList = Object.values(personIds);
-  const lines = transcriptLines(transcript, personIds);
   const modelMetrics = JSON.stringify(metricsForModel(metrics, personIds));
 
-  const extractedRaw = await client.complete(
-    'extractor',
-    fill(EXTRACTOR_PROMPT, {
-      participants: personIdList.join(', '),
-      era_stats_json: modelMetrics,
-      messages: lines,
-    }),
-  );
-  const { bank, droppedIds } = sanitizeMaterialBank(parseModelJson(extractedRaw, 'extractor'), ids);
+  // The extractor reads the chat in chunks, so each request fits the model's input limit.
+  let bank: Json = {};
+  let droppedIds = 0;
+  for (const chunk of chunkMessages(transcript, EXTRACTOR_CHUNK_SIZE)) {
+    const extractedRaw = await client.complete(
+      'extractor',
+      fill(EXTRACTOR_PROMPT, {
+        participants: personIdList.join(', '),
+        era_stats_json: modelMetrics,
+        messages: transcriptLines(chunk, personIds),
+      }),
+    );
+    const sanitized = sanitizeMaterialBank(parseModelJson(extractedRaw, 'extractor'), new Set(chunk.map((m) => m.id)));
+    droppedIds += sanitized.droppedIds;
+    bank = mergeBanks(bank, sanitized.bank);
+  }
   const flags = careFlagsOf(bank);
 
   if (flags.some((f) => f.type === 'minor_sexual')) {
@@ -285,7 +327,7 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
       ban_list: BANNED_PHRASES.join(', '),
       metrics_json: modelMetrics,
       material_bank_json: JSON.stringify(bank),
-      messages: lines,
+      messages: writerExcerpt(transcript, bank, personIds),
     }),
   );
 

@@ -26,6 +26,35 @@ describe('GroqClient', () => {
     await expect(client.complete('judge', 'x')).rejects.toThrow('HTTP 401');
   });
 
+  it('retries a rate-limited call and honours Retry-After', async () => {
+    const waits: number[] = [];
+    const statuses = [429, 503, 200];
+    const fakeFetch = (async () => {
+      const status = statuses.shift()!;
+      const headers: Record<string, string> = status === 429 ? { 'retry-after': '3' } : {};
+      return status === 200
+        ? new Response(JSON.stringify({ choices: [{ message: { content: 'done' } }] }), { status })
+        : new Response('busy', { status, headers });
+    }) as typeof fetch;
+
+    const client = new GroqClient({
+      apiKey: 'k',
+      model: 'm',
+      fetch: fakeFetch,
+      sleep: async (ms) => {
+        waits.push(ms);
+      },
+    });
+    expect(await client.complete('writer', 'x')).toBe('done');
+    expect(waits).toEqual([3000, 4000]);
+  });
+
+  it('gives up after the retry limit and reports the status', async () => {
+    const fakeFetch = (async () => new Response('busy', { status: 429 })) as typeof fetch;
+    const client = new GroqClient({ apiKey: 'k', model: 'm', fetch: fakeFetch, maxRetries: 2, sleep: async () => {} });
+    await expect(client.complete('judge', 'x')).rejects.toThrow('HTTP 429');
+  });
+
   it('refuses to start without a key', () => {
     expect(() => new GroqClient({ apiKey: '', model: 'm' })).toThrow('needs an API key');
   });
