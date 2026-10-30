@@ -4,12 +4,15 @@ import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
 import { computeMetrics } from '@engine/metrics/index';
 import { parseChat } from '@engine/parser/parse';
 import { redactMessages, type RedactionCounts } from '@engine/redact';
-import type { ParseResult } from '@engine/types';
+import type { Message, ParseResult } from '@engine/types';
 import { formatDuration, formatNumber, formatPercent, type Lang } from '../lib/format';
 import { APP_NAME, STRINGS } from '../lib/i18n';
 import { buildVerdict, type Verdict } from '../lib/verdict';
 
 type Phase = 'upload' | 'people' | 'verdict';
+
+/** Holds a redacted upload across sign-in. It lives in this tab only and is cleared once it is saved. */
+const PENDING_KEY = 'cr_pending_upload';
 
 interface Speaker {
   name: string;
@@ -48,11 +51,30 @@ export default function Home() {
   const [me, setMe] = useState<string | null>(null);
   const [nicknames, setNicknames] = useState<Record<string, string>>({});
   const [verdict, setVerdict] = useState<{ data: Verdict; me: string | null; redaction: RedactionCounts } | null>(null);
+  const [redacted, setRedacted] = useState<Message[] | null>(null);
 
   const t = STRINGS[lang];
 
   useEffect(() => {
     if (navigator.language && !navigator.language.toLowerCase().startsWith('he')) setLang('en');
+  }, []);
+
+  // Returns from sign-in with a saved upload: save it and go on to checkout.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('resume') !== '1') return;
+    let pending: string | null = null;
+    try {
+      pending = sessionStorage.getItem(PENDING_KEY);
+      sessionStorage.removeItem(PENDING_KEY);
+    } catch {
+      return;
+    }
+    if (!pending) return;
+    fetch('/api/me').then((response) => {
+      if (response.ok) void saveAndCheckout(JSON.parse(pending) as Message[]);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -99,7 +121,52 @@ export default function Home() {
     const { messages, counts } = redactMessages(parsed.messages, aliases);
     const data = buildVerdict(computeMetrics(messages));
     setVerdict({ data, me: me ? (aliases[me] ?? me) : null, redaction: counts });
+    setRedacted(messages);
     setPhase('verdict');
+  }
+
+  /** Saves the redacted chat and starts a Chat Pass checkout. Signed-out users sign in first and resume here. */
+  async function saveAndUnlock() {
+    if (!redacted) return;
+    setBusy(true);
+    setError(null);
+    const signedIn = (await fetch('/api/me')).ok;
+    if (!signedIn) {
+      try {
+        sessionStorage.setItem(PENDING_KEY, JSON.stringify(redacted));
+      } catch {
+        setBusy(false);
+        return setError(t.errSaveStorage);
+      }
+      window.location.href = `/login?next=${encodeURIComponent('/?resume=1')}`;
+      return;
+    }
+    await saveAndCheckout(redacted);
+  }
+
+  async function saveAndCheckout(messages: Message[]) {
+    setBusy(true);
+    const saved = await fetch('/api/chats', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: new Date().toLocaleDateString(), messages }),
+    });
+    const savedBody = (await saved.json()) as { chat?: { id: string }; error?: string };
+    if (!saved.ok || !savedBody.chat) {
+      setBusy(false);
+      return setError(savedBody.error ?? t.errSave);
+    }
+    const checkout = await fetch(`/api/chats/${savedBody.chat.id}/checkout`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tier: 'chat_pass' }),
+    });
+    const checkoutBody = (await checkout.json()) as { url?: string; error?: string };
+    if (!checkout.ok || !checkoutBody.url) {
+      setBusy(false);
+      return setError(checkoutBody.error ?? t.errSave);
+    }
+    window.location.href = checkoutBody.url;
   }
 
   function clearAll() {
@@ -231,6 +298,16 @@ export default function Home() {
             <p className="stat-title">{t.lockedTitle}</p>
             <ul className="locked">{t.locked.map((name) => <li key={name}>🔒 {name}</li>)}</ul>
             <p className="count">{t.lockedNote}</p>
+          </article>
+
+          <article className="card">
+            <p className="stat-title">{t.unlockTitle}</p>
+            <p className="count">{t.unlockNote}</p>
+            <div className="actions">
+              <button type="button" className="primary" onClick={saveAndUnlock} disabled={busy || !redacted}>
+                {t.unlockButton}
+              </button>
+            </div>
           </article>
 
           <div className="actions">

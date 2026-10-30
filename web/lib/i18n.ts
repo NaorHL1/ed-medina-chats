@@ -4,6 +4,11 @@ export const APP_NAME = 'Chat Report';
 
 const he = {
   tagline: 'העלו שיחת וואטסאפ וקבלו קריאה כנה, מצחיקה ומבוססת עובדות.',
+  errSave: 'לא הצלחנו לשמור את השיחה. נסו שוב.',
+  errSaveStorage: 'הדפדפן לא שומר את השיחה בזמן ההתחברות. נסו דפדפן אחר.',
+  unlockTitle: 'שמרו וקבלו את הקריאה המלאה',
+  unlockNote: 'התחברו, שלמו פעם אחת, והשיחה תישמר מוצפנת עד שתמחקו הכול.',
+  unlockButton: 'שמירה ופתיחה ב-$9.99',
   privacy: 'הכול רץ אצלכם בדפדפן. שום דבר לא נשלח לשרת בשלב הזה.',
   step: (n: number, total: number) => `שלב ${n} מתוך ${total}`,
   uploadTitle: 'העלאת השיחה',
@@ -46,6 +51,11 @@ const he = {
 
 const en: typeof he = {
   tagline: 'Upload a WhatsApp chat and get a candid, funny, fact-based read.',
+  errSave: 'We could not save this chat. Try again.',
+  errSaveStorage: 'Your browser will not keep the chat while you sign in. Try another browser.',
+  unlockTitle: 'Save and unlock the full read',
+  unlockNote: 'Sign in, pay once, and the chat is stored encrypted until you delete everything.',
+  unlockButton: 'Save and unlock for $9.99',
   privacy: 'Everything runs in your browser. Nothing is sent to a server at this stage.',
   step: (n, total) => `Step ${n} of ${total}`,
   uploadTitle: 'Upload your chat',

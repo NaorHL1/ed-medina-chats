@@ -67,15 +67,20 @@ export async function runLive(
   cases: (EvalCase | CareCase)[],
   client: ModelClient,
   request: ReportRequest,
+  onOutcome: (outcome: LiveOutcome) => void = () => {},
 ): Promise<LiveSummary> {
   const outcomes: LiveOutcome[] = [];
+  const record = (outcome: LiveOutcome) => {
+    outcomes.push(outcome);
+    onOutcome(outcome);
+  };
   for (const evalCase of cases) {
     const expected = 'careLine' in evalCase ? 'care' : 'report';
     try {
       const analysis = analyzeChat(buildChatText(evalCase));
       const result = await runReport(analysis, request, client);
       if (result.kind === 'report') {
-        outcomes.push({
+        record({
           ...emptyOutcome(evalCase.id, expected, 'report'),
           cards: result.report.cards.length,
           removed: result.removed.length,
@@ -84,10 +89,10 @@ export async function runLive(
           reasons: result.removed.map((r) => `${r.stage}: ${r.reason}`),
         });
       } else {
-        outcomes.push(emptyOutcome(evalCase.id, expected, result.kind));
+        record(emptyOutcome(evalCase.id, expected, result.kind));
       }
     } catch (error) {
-      outcomes.push({
+      record({
         ...emptyOutcome(evalCase.id, expected, 'error'),
         error: error instanceof Error ? error.message : String(error),
       });
@@ -120,6 +125,19 @@ export function failedLiveGates(summary: LiveSummary): string[] {
   return failures;
 }
 
+/** Free-tier Groq allows about two requests a minute for this model, so the live run waits between calls. */
+export const DEFAULT_MIN_INTERVAL_MS = 60_000;
+
+/** All cases by default; LIVE_CASE_IDS (comma-separated) picks a subset for a quick run. */
+export function selectCases(filter: string | undefined): (EvalCase | CareCase)[] {
+  const all: (EvalCase | CareCase)[] = [...EVAL_CASES.slice(0, 4), ...CARE_CASES];
+  if (!filter) return all;
+  const wanted = new Set(filter.split(',').map((id) => id.trim()).filter(Boolean));
+  const picked = all.filter((c) => wanted.has(c.id));
+  if (picked.length === 0) throw new Error();
+  return picked;
+}
+
 /** Refuses to run without both keys, so no model call happens by accident. */
 export function liveConfig(env: NodeJS.ProcessEnv): { apiKey: string; model: string } {
   const apiKey = env['GROQ_API_KEY'];
@@ -135,20 +153,20 @@ export async function main(env: NodeJS.ProcessEnv = process.env): Promise<number
     name: string;
     card: string;
   };
-  const client = new GroqClient({ apiKey, model });
-  const summary = await runLive([...EVAL_CASES.slice(0, 4), ...CARE_CASES], client, {
-    reportType: 'full_read',
-    language: 'en',
-    intensity: 3,
-    persona,
-    localResources: 'ERAN (Israel)',
-  });
-
-  for (const o of summary.outcomes) {
+  const pacing = Number(env['GROQ_MIN_INTERVAL_MS'] ?? DEFAULT_MIN_INTERVAL_MS);
+  const log = (line: string) => process.stderr.write(`${new Date().toISOString().slice(11, 19)} ${line}\n`);
+  const client = new GroqClient({ apiKey, model, minIntervalMs: pacing, log });
+  const printOutcome = (o: LiveOutcome) => {
     const detail = o.error ? ` error: ${o.error}` : ` cards=${o.cards} removed=${o.removed} critic=${o.criticRounds}`;
-    process.stdout.write(`${o.id.padEnd(22)} expected=${o.expected.padEnd(6)} got=${o.result}${detail}\n`);
+    process.stdout.write(`${new Date().toISOString().slice(11, 19)} ${o.id.padEnd(22)} expected=${o.expected.padEnd(6)} got=${o.result}${detail}\n`);
     for (const reason of o.reasons) process.stdout.write(`    - ${reason}\n`);
-  }
+  };
+  const summary = await runLive(
+    selectCases(env["LIVE_CASE_IDS"]),
+    client,
+    { reportType: 'full_read', language: 'en', intensity: 3, persona, localResources: 'ERAN (Israel)' },
+    printOutcome,
+  );
   process.stdout.write(
     `\ncompletion ${summary.completion}, care recall ${summary.careRecall}, care false alarms ${summary.careFalseAlarmRate}\n`,
   );
