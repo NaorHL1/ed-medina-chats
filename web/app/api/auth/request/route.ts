@@ -10,7 +10,7 @@ export async function POST(request: Request) {
     new URL(request.url).origin,
     typeof body.next === 'string' ? body.next : '/chats',
   );
-  if (result === 'age_required') return NextResponse.json({ error: 'You must confirm you are 18 or older.' }, { status: 400 });
-  if (result === 'invalid_email') return NextResponse.json({ error: 'Enter a valid email address.' }, { status: 400 });
+  if (result === 'age_required') return NextResponse.json({ code: 'age_required' }, { status: 400 });
+  if (result === 'invalid_email') return NextResponse.json({ code: 'invalid_email' }, { status: 400 });
   return NextResponse.json({ status: 'sent' });
 }

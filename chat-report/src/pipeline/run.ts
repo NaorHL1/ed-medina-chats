@@ -190,9 +190,18 @@ interface CriticScore {
   rewrite: string | null;
 }
 
+/** Models often wrap a list in an object, such as {"scores": [...]}. Takes the list, whatever its key. */
+export function listOf(value: unknown, stage: Stage): unknown[] {
+  if (Array.isArray(value)) return value;
+  if (isObject(value)) {
+    const inner = Object.values(value).find(Array.isArray);
+    if (inner) return inner;
+  }
+  throw new PipelineError(`${stage} must return a JSON array`);
+}
+
 function parseCritic(value: unknown): CriticScore[] {
-  if (!Array.isArray(value)) throw new PipelineError('critic must return a JSON array');
-  return value.filter(isObject).map((row) => ({
+  return listOf(value, 'critic').filter(isObject).map((row) => ({
     card: Number(row['card']),
     specificity: Number(row['specificity']),
     truth: Number(row['truth']),
@@ -205,8 +214,7 @@ function parseCritic(value: unknown): CriticScore[] {
 }
 
 function parseVerdicts(value: unknown): Verdict[] {
-  if (!Array.isArray(value)) throw new PipelineError('judge must return a JSON array');
-  return value.filter(isObject).flatMap((row): Verdict[] => {
+  return listOf(value, 'judge').filter(isObject).flatMap((row): Verdict[] => {
     const verdict = row['verdict'];
     if (typeof row['card'] !== 'number') return [];
     if (verdict !== 'supported' && verdict !== 'partly' && verdict !== 'unsupported') return [];

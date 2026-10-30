@@ -7,6 +7,7 @@ import { redactMessages, type RedactionCounts } from '@engine/redact';
 import type { Message, ParseResult } from '@engine/types';
 import { formatDuration, formatNumber, formatPercent, type Lang } from '../lib/format';
 import { APP_NAME, STRINGS } from '../lib/i18n';
+import { useLang } from '../lib/lang';
 import { buildVerdict, type Verdict } from '../lib/verdict';
 
 type Phase = 'upload' | 'people' | 'verdict';
@@ -42,7 +43,7 @@ function buildAliases(speakers: Speaker[], nicknames: Record<string, string>): R
 }
 
 export default function Home() {
-  const [lang, setLang] = useState<Lang>('he');
+  const [lang, setLang] = useLang();
   const [phase, setPhase] = useState<Phase>('upload');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,10 +55,6 @@ export default function Home() {
   const [redacted, setRedacted] = useState<Message[] | null>(null);
 
   const t = STRINGS[lang];
-
-  useEffect(() => {
-    if (navigator.language && !navigator.language.toLowerCase().startsWith('he')) setLang('en');
-  }, []);
 
   // Returns from sign-in with a saved upload: save it and go on to checkout.
   useEffect(() => {
@@ -77,10 +74,6 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    document.documentElement.lang = lang;
-    document.documentElement.dir = lang === 'he' ? 'rtl' : 'ltr';
-  }, [lang]);
 
   const speakers = useMemo(() => (parsed ? speakersOf(parsed) : []), [parsed]);
 

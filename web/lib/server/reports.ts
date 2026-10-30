@@ -21,7 +21,11 @@ export interface ReportRow {
   createdAt: number;
 }
 
+export type Language = 'he' | 'en';
+
 export interface ReportOptions {
+  /** Language of the report text. The writer writes native Hebrew when this is he. */
+  language?: Language;
   /** Injected by tests. Production builds the Groq client from the environment. */
   client?: ModelClient;
 }
@@ -113,7 +117,7 @@ async function runJob(userId: string, reportId: string, chatId: string, reportTy
       personIds,
       client,
       reportType,
-      language: 'en',
+      language: options.language ?? 'en',
       intensity: 3,
       persona,
       localResources: process.env['SUPPORT_RESOURCES'] ?? 'ERAN (Israel)',
@@ -129,4 +133,15 @@ async function runJob(userId: string, reportId: string, chatId: string, reportTy
 /** Resolves once every queued job has finished. Used by tests. */
 export function drainQueue(): Promise<void> {
   return queue;
+}
+
+/** The most recent report for a chat the user owns, so the page can show it after a reload. */
+export function latestReport(userId: string, chatId: string): ReportRow | null {
+  const row = db()
+    .prepare(
+      `SELECT reports.id FROM reports JOIN chats ON chats.id = reports.chat_id
+       WHERE reports.chat_id = ? AND chats.user_id = ? ORDER BY reports.created_at DESC LIMIT 1`,
+    )
+    .get(chatId, userId) as { id: string } | undefined;
+  return row ? getReport(userId, row.id) : null;
 }

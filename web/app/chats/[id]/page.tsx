@@ -2,18 +2,15 @@
 
 import Link from 'next/link';
 import { use, useEffect, useState } from 'react';
-
-interface ReportCard {
-  kind: string;
-  [key: string]: unknown;
-}
+import { ACCOUNT_STRINGS } from '../../../lib/account-i18n';
+import type { Lang } from '../../../lib/format';
+import { useLang } from '../../../lib/lang';
 
 interface ReportResult {
   kind: 'report' | 'care' | 'stopped';
-  report?: { headline: string; cards: ReportCard[] };
+  report?: { headline: string; cards: Record<string, unknown>[] };
   summary?: string;
   resources?: string[];
-  reason?: string;
 }
 
 interface Report {
@@ -26,20 +23,29 @@ interface Report {
 interface ChatView {
   chat: { id: string; title: string; messageCount: number; hasTranscript: boolean };
   unlocked: boolean;
+  report: Report | null;
 }
 
 export default function ChatPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const [lang, setLang] = useLang();
+  const t = ACCOUNT_STRINGS[lang];
   const [view, setView] = useState<ChatView | null>(null);
   const [report, setReport] = useState<Report | null>(null);
+  const [reportLang, setReportLang] = useState<Lang | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     fetch(`/api/chats/${id}`).then(async (response) => {
-      if (!response.ok) return setError(response.status === 401 ? 'Sign in first.' : 'Chat not found.');
-      setView((await response.json()) as ChatView);
+      if (response.status === 401) return setError(ACCOUNT_STRINGS.en.signInFirst);
+      if (!response.ok) return setError(t.notFound);
+      const body = (await response.json()) as ChatView;
+      setView(body);
+      setReport(body.report);
     });
+    // Loaded once per chat; the language toggle only changes the words.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   // Poll while a report is queued or running. The job runs on the server, one at a time.
@@ -61,77 +67,92 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tier: 'chat_pass' }),
     });
-    const body = (await response.json()) as { url?: string; error?: string };
+    const body = (await response.json()) as { url?: string };
     if (!response.ok || !body.url) {
       setBusy(false);
-      return setError(body.error ?? 'Could not start checkout.');
+      return setError(t.errCheckout);
     }
     window.location.href = body.url;
   }
 
   async function generate() {
+    const language: Lang = reportLang ?? lang;
     setBusy(true);
     setError(null);
     const response = await fetch(`/api/chats/${id}/reports`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reportType: 'full_read' }),
+      body: JSON.stringify({ reportType: 'full_read', language }),
     });
     const body = (await response.json()) as { report?: Report; error?: string };
     setBusy(false);
-    if (!response.ok || !body.report) return setError(body.error ?? 'Could not start the report.');
+    if (response.status === 402) return setError(t.unlockFirst);
+    if (!response.ok || !body.report) return setError(body.error ?? t.errReport);
     setReport(body.report);
   }
 
-  if (error && !view) return <main className="shell"><p className="error">{error}</p><Link href="/chats">Back</Link></main>;
-  if (!view) return <main className="shell"><p>Loading...</p></main>;
+  const reportLanguage: Lang = reportLang ?? lang;
+  // A finished report stands on its own. A failed one can be tried again.
+  const canGenerate = !report || report.status === 'failed';
+  const arrow = lang === 'he' ? ACCOUNT_STRINGS.he.backArrow : ACCOUNT_STRINGS.en.backArrow;
+
+  if (error && !view) return <main className="shell"><p className="error" role="alert">{error}</p></main>;
+  if (!view) return <main className="shell"><p>{t.loading}</p></main>;
 
   return (
     <main className="shell">
-      <p><Link href="/chats">← Your chats</Link></p>
+      <div className="top">
+        <Link href="/chats">{arrow} {t.back}</Link>
+        <button type="button" className="link" onClick={() => setLang(lang === 'he' ? 'en' : 'he')}>
+          {t.langSwitch}
+        </button>
+      </div>
       <h1>{view.chat.title}</h1>
-      <p>{view.chat.messageCount} messages</p>
+      <p>{t.messages(view.chat.messageCount)}</p>
 
       {!view.unlocked && (
         <section className="card">
-          <h2>Unlock the full read</h2>
-          <p>A Chat Pass gives you the full read of this chat, with every claim checked against the transcript.</p>
+          <h2>{t.unlockTitle}</h2>
+          <p>{t.unlockBody}</p>
           <div className="actions">
-            <button type="button" className="primary" onClick={unlock} disabled={busy}>Unlock with a Chat Pass</button>
+            <button type="button" className="primary" onClick={unlock} disabled={busy}>{t.unlockButton}</button>
           </div>
         </section>
       )}
 
-      {view.unlocked && !report && view.chat.hasTranscript && (
+      {view.unlocked && canGenerate && view.chat.hasTranscript && (
         <section className="card">
-          <h2>Full read</h2>
+          <h2>{t.fullRead}</h2>
+          <label>
+            {t.reportLanguage}
+            <select value={reportLanguage} onChange={(e) => setReportLang(e.target.value as Lang)}>
+              <option value="he">עברית</option>
+              <option value="en">English</option>
+            </select>
+          </label>
           <div className="actions">
-            <button type="button" className="primary" onClick={generate} disabled={busy}>Generate the full read</button>
+            <button type="button" className="primary" onClick={generate} disabled={busy}>{t.generate}</button>
           </div>
         </section>
       )}
 
-      {view.unlocked && !view.chat.hasTranscript && !report && (
-        <p role="status">The chat was deleted after its report. Upload it again to make a new one.</p>
-      )}
+      {view.unlocked && canGenerate && !view.chat.hasTranscript && <p role="status">{t.deletedAfterReport}</p>}
 
-      {report && (report.status === 'queued' || report.status === 'running') && (
-        <p role="status">Writing your report. This can take a few minutes on the free model tier.</p>
-      )}
+      {report && (report.status === 'queued' || report.status === 'running') && <p role="status">{t.writing}</p>}
 
-      {report?.status === 'failed' && <p className="error" role="alert">The report failed: {report.error}</p>}
+      {report?.status === 'failed' && (
+        <p className="error" role="alert">{t.failed} {report.error}</p>
+      )}
 
       {report?.status === 'care' && report.result?.summary && (
         <section className="card" aria-labelledby="care-h">
-          <h2 id="care-h">A note before the report</h2>
+          <h2 id="care-h">{t.careTitle}</h2>
           <p>{report.result.summary}</p>
           {report.result.resources?.map((r) => <p key={r}>{r}</p>)}
         </section>
       )}
 
-      {report?.status === 'stopped' && (
-        <p role="alert">This chat cannot get a report.</p>
-      )}
+      {report?.status === 'stopped' && <p role="alert">{t.stopped}</p>}
 
       {report?.status === 'done' && report.result?.report && (
         <section className="card" aria-labelledby="report-h">
