@@ -26,7 +26,8 @@ may cite. Models interpret these numbers; they never count them.
 | Pipeline: extractor, care routing, writer with one retry, critic (two rounds), judge | `src/pipeline/run.ts` | done, tested with a scripted model client |
 | Prompt pack from the plan | `src/pipeline/prompts.ts` | done |
 | Eval set (dev and held-out) and rubric: round trip, numbers, planted recall, false alarms | `src/eval/`, `eval/RUBRIC.md` | done; `npm run eval` passes both sets |
-| Live model calls, blind comparison against a single-call baseline, care cases | — | **not run**: no model API key in this environment |
+| Live model harness: real pipeline over eval cases and care cases, gates on completion and care routing | `src/eval/live.ts`, `eval/personas/roaster.json` (draft persona) | harness done and tested with a fake client; **not run**: no GROQ_API_KEY in this environment |
+| Blind comparison against a single-call baseline | — | not started |
 | CLI wrapper: `analyze` prints metrics as JSON; `--report` runs the pipeline through Groq | `src/cli.ts`, `src/analyze.ts` | done, tested with a stub client; live run not done (no key) |
 
 Deviation from the plan: metric refs are person-qualified (`P1.initiation_rate`), because a
@@ -49,6 +50,14 @@ npm run eval     # dev and held-out sets, prints the scorecard, exits 1 on a fai
 ```
 
 Detectors were tuned on the dev set; the held-out set is the honest number. Fights are not scored by code (the extractor must judge them). See `eval/RUBRIC.md`.
+
+## Live eval (needs a Groq key)
+
+```sh
+GROQ_API_KEY=... GROQ_MODEL=... npm run eval:live
+```
+
+Runs the full pipeline on four normal chats and two care chats. The same Groq model serves every stage for now; the plan calls for a small model for the extractor and a frontier model for the writer and critic, which needs a second model id.
 
 ## Conventions
 
