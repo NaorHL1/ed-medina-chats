@@ -25,7 +25,8 @@ may cite. Models interpret these numbers; they never count them.
 | Code-first verifier: evidence ids, refs, numbers, verbatim quotes, banned phrases, emoji | `src/report/verify.ts` | done |
 | Pipeline: extractor, care routing, writer with one retry, critic (two rounds), judge | `src/pipeline/run.ts` | done, tested with a scripted model client |
 | Prompt pack from the plan | `src/pipeline/prompts.ts` | done |
-| Live model calls, eval set, rubric, blind comparison against a single-call baseline | — | **not run**: no model API key in this environment |
+| Eval set (dev and held-out) and rubric: round trip, numbers, planted recall, false alarms | `src/eval/`, `eval/RUBRIC.md` | done; `npm run eval` passes both sets |
+| Live model calls, blind comparison against a single-call baseline, care cases | — | **not run**: no model API key in this environment |
 | CLI wrapper: `analyze` prints metrics as JSON; `--report` runs the pipeline through Groq | `src/cli.ts`, `src/analyze.ts` | done, tested with a stub client; live run not done (no key) |
 
 Deviation from the plan: metric refs are person-qualified (`P1.initiation_rate`), because a
@@ -40,6 +41,14 @@ npm run analyze -- chat.txt --report full-read --model <groq-model> --persona pe
 ```
 
 The summary holds no message text. Redaction runs before any counting, and the model sees only person ids.
+
+## Eval
+
+```sh
+npm run eval     # dev and held-out sets, prints the scorecard, exits 1 on a failed gate
+```
+
+Detectors were tuned on the dev set; the held-out set is the honest number. Fights are not scored by code (the extractor must judge them). See `eval/RUBRIC.md`.
 
 ## Conventions
 

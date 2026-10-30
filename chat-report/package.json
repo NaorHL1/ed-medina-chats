@@ -8,7 +8,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck && npm test",
-    "analyze": "tsx src/cli.ts"
+    "analyze": "tsx src/cli.ts",
+    "eval": "tsx src/eval/run.ts"
   },
   "engines": {
     "node": ">=20"
