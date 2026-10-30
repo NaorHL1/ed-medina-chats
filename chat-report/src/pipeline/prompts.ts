@@ -63,7 +63,9 @@ PEOPLE: {participants}
 
 RULES
 1. Every insight cites message ids in "evidence" or a metric in "metric_refs". No evidence, no insight.
-2. Numbers come only from METRICS, as whole numbers or percentages. Never estimate or recount.
+2. Numbers come only from METRICS, as whole numbers or percentages. Never estimate, recount or write a number that is not in METRICS. Any number you print must have its ref in "metric_refs", such as "P1.initiation_rate". Refs are the exact keys in METRICS, with the person id in front.
+2b. Every insight card needs at least one id in "evidence" or one ref in "metric_refs". The "Real talk" card needs evidence too.
+2c. "metric_refs" and "evidence" are always JSON arrays, even with one item: ["P1.initiation_rate"], never a bare string.
 3. Patterns, not mind-reading: "seems", "in this chat", "often".
 4. Jokes target behavior in the chat only: never appearance, identity, health, money, trauma or anything a person cannot change.
 5. No clinical or therapy labels. No advice to monitor, track or pressure anyone.
