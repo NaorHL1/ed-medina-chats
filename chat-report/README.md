@@ -26,10 +26,20 @@ may cite. Models interpret these numbers; they never count them.
 | Pipeline: extractor, care routing, writer with one retry, critic (two rounds), judge | `src/pipeline/run.ts` | done, tested with a scripted model client |
 | Prompt pack from the plan | `src/pipeline/prompts.ts` | done |
 | Live model calls, eval set, rubric, blind comparison against a single-call baseline | — | **not run**: no model API key in this environment |
-| CLI wrapper | — | not started |
+| CLI wrapper: `analyze` prints metrics as JSON; `--report` runs the pipeline through Groq | `src/cli.ts`, `src/analyze.ts` | done, tested with a stub client; live run not done (no key) |
 
 Deviation from the plan: metric refs are person-qualified (`P1.initiation_rate`), because a
 stat card that names no person is ambiguous. The prompts send ids, never names.
+
+## CLI
+
+```sh
+npm run analyze -- chat.txt --alias "Naor=Me" --alias "Dana=Dani" --out summary.json
+# model report (needs GROQ_API_KEY, GROQ_MODEL or --model, and a persona JSON file)
+npm run analyze -- chat.txt --report full-read --model <groq-model> --persona persona.json
+```
+
+The summary holds no message text. Redaction runs before any counting, and the model sees only person ids.
 
 ## Conventions
 
