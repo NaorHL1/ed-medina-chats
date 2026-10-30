@@ -6,8 +6,8 @@ import type { DatabaseSync as Database } from 'node:sqlite';
 const { DatabaseSync } = process.getBuiltinModule('node:sqlite') as typeof import('node:sqlite');
 
 /**
- * SQLite for the MVP, through Node's built-in driver (no native build). The schema holds no raw
- * transcript: chat bodies are stored encrypted in `chats.payload`, and deleted with the chat.
+ * SQLite for the MVP, through Node's built-in driver (no native build). Chat bodies are stored encrypted
+ * in `chats.payload`. The payload is cleared once a report finishes, so no transcript outlives its report.
  */
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS chats (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   title TEXT NOT NULL,
   created_at INTEGER NOT NULL,
-  payload TEXT NOT NULL
+  message_count INTEGER NOT NULL DEFAULT 0,
+  payload TEXT
 );
 CREATE TABLE IF NOT EXISTS purchases (
   id TEXT PRIMARY KEY,

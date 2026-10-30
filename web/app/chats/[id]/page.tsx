@@ -24,7 +24,7 @@ interface Report {
 }
 
 interface ChatView {
-  chat: { id: string; title: string; messageCount: number };
+  chat: { id: string; title: string; messageCount: number; hasTranscript: boolean };
   unlocked: boolean;
 }
 
@@ -102,13 +102,17 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
         </section>
       )}
 
-      {view.unlocked && !report && (
+      {view.unlocked && !report && view.chat.hasTranscript && (
         <section className="card">
           <h2>Full read</h2>
           <div className="actions">
             <button type="button" className="primary" onClick={generate} disabled={busy}>Generate the full read</button>
           </div>
         </section>
+      )}
+
+      {view.unlocked && !view.chat.hasTranscript && !report && (
+        <p role="status">The chat was deleted after its report. Upload it again to make a new one.</p>
       )}
 
       {report && (report.status === 'queued' || report.status === 'running') && (

@@ -11,10 +11,20 @@ export interface ChatSummary {
   title: string;
   createdAt: number;
   messageCount: number;
+  /** False once the transcript is deleted after its report. The chat and its reports remain. */
+  hasTranscript: boolean;
 }
 
 export interface StoredChat extends ChatSummary {
-  messages: Message[];
+  messages: Message[] | null;
+}
+
+interface ChatRow {
+  id: string;
+  title: string;
+  created_at: number;
+  message_count: number;
+  payload: string | null;
 }
 
 /**
@@ -26,31 +36,42 @@ export function createChat(userId: string, title: string, messages: Message[]): 
   if (messages.length > MAX_MESSAGES) throw new ChatError(`More than ${MAX_MESSAGES} messages is not a WhatsApp export.`);
   const id = randomUUID();
   const createdAt = Date.now();
+  const shortTitle = title.slice(0, 80) || 'Chat';
   db()
-    .prepare('INSERT INTO chats (id, user_id, title, created_at, payload) VALUES (?, ?, ?, ?, ?)')
-    .run(id, userId, title.slice(0, 80) || 'Chat', createdAt, seal(JSON.stringify(messages)));
-  return { id, title: title.slice(0, 80) || 'Chat', createdAt, messageCount: messages.length };
+    .prepare('INSERT INTO chats (id, user_id, title, created_at, message_count, payload) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(id, userId, shortTitle, createdAt, messages.length, seal(JSON.stringify(messages)));
+  return { id, title: shortTitle, createdAt, messageCount: messages.length, hasTranscript: true };
+}
+
+function summaryOf(row: ChatRow): ChatSummary {
+  return {
+    id: row.id,
+    title: row.title,
+    createdAt: row.created_at,
+    messageCount: row.message_count,
+    hasTranscript: row.payload !== null,
+  };
 }
 
 export function listChats(userId: string): ChatSummary[] {
   const rows = db()
-    .prepare('SELECT id, title, created_at, payload FROM chats WHERE user_id = ? ORDER BY created_at DESC')
-    .all(userId) as { id: string; title: string; created_at: number; payload: string }[];
-  return rows.map((row) => ({
-    id: row.id,
-    title: row.title,
-    createdAt: row.created_at,
-    messageCount: (JSON.parse(open(row.payload)) as Message[]).length,
-  }));
+    .prepare('SELECT id, title, created_at, message_count, payload FROM chats WHERE user_id = ? ORDER BY created_at DESC')
+    .all(userId) as unknown as ChatRow[];
+  return rows.map(summaryOf);
 }
 
 export function getChat(userId: string, chatId: string): StoredChat | null {
   const row = db()
-    .prepare('SELECT id, title, created_at, payload FROM chats WHERE id = ? AND user_id = ?')
-    .get(chatId, userId) as { id: string; title: string; created_at: number; payload: string } | undefined;
+    .prepare('SELECT id, title, created_at, message_count, payload FROM chats WHERE id = ? AND user_id = ?')
+    .get(chatId, userId) as unknown as ChatRow | undefined;
   if (!row) return null;
-  const messages = JSON.parse(open(row.payload)) as Message[];
-  return { id: row.id, title: row.title, createdAt: row.created_at, messageCount: messages.length, messages };
+  const messages = row.payload === null ? null : (JSON.parse(open(row.payload)) as Message[]);
+  return { ...summaryOf(row), messages };
+}
+
+/** Clears the transcript. Called once a report has finished, so the raw chat outlives its report by no time at all. */
+export function purgeTranscript(chatId: string): void {
+  db().prepare('UPDATE chats SET payload = NULL WHERE id = ?').run(chatId);
 }
 
 /** "Delete everything": removes every chat, report and login session for the user. */

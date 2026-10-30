@@ -8,6 +8,7 @@ import { CATALOG, createPurchase, hasChatPass, markPaid, stubProvider, verifyStr
 import { createReport, drainQueue, getReport, ReportError } from '../lib/server/reports';
 import { db } from '../lib/server/db';
 import type { Message } from '@engine/types';
+import type { ModelClient } from '@engine/pipeline/run';
 
 const KEY = randomBytes(32).toString('base64');
 const message = (i: number, sender = 'Me'): Message => ({
@@ -188,6 +189,28 @@ describe('reports', () => {
     const finished = getReport(userId, queued.id);
     expect(finished?.status).toBe('failed');
     expect(finished?.error).toMatch(/GROQ_API_KEY/);
+    // A failed job keeps the transcript, so the user can retry.
+    expect(getChat(userId, chat.id)?.messages).not.toBeNull();
+  });
+
+  it('deletes the transcript once the report finishes, and refuses a new report after', async () => {
+    const session = await signIn('care@example.com');
+    const userId = sessionUser(session)!.id;
+    const chat = createChat(userId, 'Chat', [message(1), message(2)]);
+    markPaid(createPurchase(userId, chat.id, 'chat_pass'), 'ref');
+    const client: ModelClient = {
+      complete: async (stage) =>
+        stage === 'extractor'
+          ? JSON.stringify({ moments: [], care_flags: [{ type: 'self_harm', ids: [], severity: 'high' }] })
+          : JSON.stringify({ summary: 'A calm note.', resources: ['ERAN'] }),
+    };
+
+    const report = createReport(userId, chat.id, 'full_read', { client });
+    await drainQueue();
+    expect(getReport(userId, report.id)?.status).toBe('care');
+    expect(getChat(userId, chat.id)?.messages).toBeNull();
+    expect(listChats(userId)[0]?.hasTranscript).toBe(false);
+    expect(() => createReport(userId, chat.id, 'full_read', { client })).toThrow(/transcript was deleted/);
   });
 
   it('hides another user’s report', async () => {

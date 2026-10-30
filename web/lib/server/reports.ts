@@ -2,10 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { computeMetrics } from '@engine/metrics/index';
-import { runPipeline, type PipelineResult } from '@engine/pipeline/run';
+import { runPipeline, type ModelClient, type PipelineResult } from '@engine/pipeline/run';
 import { GroqClient } from '@engine/pipeline/groq';
 import { db } from './db';
-import { getChat } from './chats';
+import { getChat, purgeTranscript } from './chats';
 import { hasChatPass } from './billing';
 
 export const REPORT_TYPES = ['full_read'] as const;
@@ -21,6 +21,11 @@ export interface ReportRow {
   createdAt: number;
 }
 
+export interface ReportOptions {
+  /** Injected by tests. Production builds the Groq client from the environment. */
+  client?: ModelClient;
+}
+
 export class ReportError extends Error {
   override name = 'ReportError';
 }
@@ -31,15 +36,18 @@ export class ReportError extends Error {
  */
 let queue: Promise<void> = Promise.resolve();
 
-export function createReport(userId: string, chatId: string, reportType: ReportType): ReportRow {
+export function createReport(userId: string, chatId: string, reportType: ReportType, options: ReportOptions = {}): ReportRow {
   if (!hasChatPass(userId, chatId)) throw new ReportError('Unlock this chat with a Chat Pass first.');
-  if (!getChat(userId, chatId)) throw new ReportError('Chat not found.');
+  const chat = getChat(userId, chatId);
+  if (!chat) throw new ReportError('Chat not found.');
+  if (chat.messages === null) throw new ReportError('This chat’s transcript was deleted after its report. Upload it again to make a new one.');
+
   const id = randomUUID();
   const createdAt = Date.now();
   db()
     .prepare('INSERT INTO reports (id, chat_id, report_type, status, created_at) VALUES (?, ?, ?, ?, ?)')
     .run(id, chatId, reportType, 'queued', createdAt);
-  queue = queue.then(() => runJob(userId, id, chatId, reportType));
+  queue = queue.then(() => runJob(userId, id, chatId, reportType, options));
   return { id, chatId, reportType, status: 'queued', result: null, error: null, createdAt };
 }
 
@@ -77,15 +85,21 @@ export function statusOf(result: PipelineResult): ReportRow['status'] {
   return 'stopped';
 }
 
-async function runJob(userId: string, reportId: string, chatId: string, reportType: ReportType): Promise<void> {
+/** The Groq client comes from the environment. Throws when the key or model is missing. */
+function groqFromEnv(): ModelClient {
+  const apiKey = process.env['GROQ_API_KEY'];
+  const model = process.env['GROQ_MODEL'];
+  if (!apiKey || !model) throw new ReportError('Set GROQ_API_KEY and GROQ_MODEL on the server.');
+  return new GroqClient({ apiKey, model, minIntervalMs: Number(process.env['GROQ_MIN_INTERVAL_MS'] ?? 60_000) });
+}
+
+async function runJob(userId: string, reportId: string, chatId: string, reportType: ReportType, options: ReportOptions): Promise<void> {
   setStatus(reportId, 'running', null, null);
   try {
-    const apiKey = process.env['GROQ_API_KEY'];
-    const model = process.env['GROQ_MODEL'];
-    if (!apiKey || !model) throw new ReportError('Set GROQ_API_KEY and GROQ_MODEL on the server.');
-
+    const client = options.client ?? groqFromEnv();
     const chat = getChat(userId, chatId);
-    if (!chat) throw new ReportError('Chat not found.');
+    if (!chat?.messages) throw new ReportError('The transcript is no longer available.');
+
     const metrics = computeMetrics(chat.messages);
     const personIds = Object.fromEntries(metrics.participants.map((name, i) => [name, `P${i + 1}`]));
     const persona = JSON.parse(readFileSync(join(process.cwd(), '..', 'chat-report', 'eval', 'personas', 'roaster.json'), 'utf8')) as {
@@ -93,7 +107,6 @@ async function runJob(userId: string, reportId: string, chatId: string, reportTy
       card: string;
     };
 
-    const client = new GroqClient({ apiKey, model, minIntervalMs: Number(process.env['GROQ_MIN_INTERVAL_MS'] ?? 35_000) });
     const result = await runPipeline({
       transcript: chat.messages,
       metrics,
@@ -106,6 +119,8 @@ async function runJob(userId: string, reportId: string, chatId: string, reportTy
       localResources: process.env['SUPPORT_RESOURCES'] ?? 'ERAN (Israel)',
     });
     setStatus(reportId, statusOf(result), result, null);
+    // The report is stored, so the raw chat goes now. A failed job keeps it, so the user can retry.
+    purgeTranscript(chatId);
   } catch (error) {
     setStatus(reportId, 'failed', null, error instanceof Error ? error.message : String(error));
   }
