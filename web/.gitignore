@@ -3,3 +3,6 @@ node_modules/
 next-env.d.ts
 *.tsbuildinfo
 data/
+
+# Secrets: keys and local settings never go in git
+.env*.local

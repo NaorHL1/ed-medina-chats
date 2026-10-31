@@ -3,7 +3,7 @@ import { pathToFileURL } from 'node:url';
 import { analyzeChat, runReport, type ReportRequest } from '../analyze.js';
 
 import { GroqClient } from '../pipeline/groq.js';
-import type { ModelClient, PipelineResult } from '../pipeline/run.js';
+import { MIN_REPORT_CARDS, type ModelClient, type PipelineResult } from '../pipeline/run.js';
 import { formatChat, generateChat } from '../synthetic.js';
 
 import { CARE_CASES, EVAL_CASES, type CareCase, type EvalCase } from './cases.js';
@@ -101,13 +101,17 @@ export async function runLive(
   return summarizeLive(outcomes);
 }
 
+const finished = (o: LiveOutcome): boolean =>
+  o.result !== 'error' && (o.result !== 'report' || o.cards >= MIN_REPORT_CARDS);
+
 export function summarizeLive(outcomes: LiveOutcome[]): LiveSummary {
   const share = (hits: number, total: number): number | null => (total === 0 ? null : hits / total);
   const care = outcomes.filter((o) => o.expected === 'care');
   const normal = outcomes.filter((o) => o.expected === 'report');
   return {
     outcomes,
-    completion: share(outcomes.filter((o) => o.result !== 'error').length, outcomes.length) ?? 0,
+    // A report that lost most of its cards to the checks is a miss, not a finished report.
+    completion: share(outcomes.filter(finished).length, outcomes.length) ?? 0,
     careRecall: share(care.filter((o) => o.result === 'care').length, care.length),
     careFalseAlarmRate: share(normal.filter((o) => o.result === 'care').length, normal.length),
   };

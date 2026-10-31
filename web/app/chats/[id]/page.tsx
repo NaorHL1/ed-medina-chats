@@ -141,7 +141,9 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
       {report && (report.status === 'queued' || report.status === 'running') && <p role="status">{t.writing}</p>}
 
       {report?.status === 'failed' && (
-        <p className="error" role="alert">{t.failed} {report.error}</p>
+        <p className="error" role="alert">
+          {report.error === 'not_enough_cards' ? t.notEnoughCards : `${t.failed} ${report.error ?? ''}`}
+        </p>
       )}
 
       {report?.status === 'care' && report.result?.summary && (

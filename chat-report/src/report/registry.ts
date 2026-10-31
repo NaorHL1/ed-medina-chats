@@ -1,5 +1,6 @@
 import type { ChatMetrics, PersonMetrics } from '../metrics/index.js';
 
+const SECOND_MS = 1_000;
 const MINUTE_MS = 60_000;
 const HOUR_MS = 3_600_000;
 
@@ -75,8 +76,58 @@ export function buildRegistry(metrics: ChatMetrics, personIds: Record<string, st
   for (const value of values.values()) {
     printable.add(Math.round(value));
     printable.add(Math.round(value * 100));
+    printable.add(Math.round(value / SECOND_MS));
     printable.add(Math.round(value / MINUTE_MS));
     printable.add(Math.round(value / HOUR_MS));
   }
   return { values, printable };
+}
+
+const RATE_KEYS = new Set([
+  'share_of_messages',
+  'share_of_words',
+  'initiation_rate',
+  'ender_rate',
+  'double_text_rate',
+  'question_answer_rate',
+  'night_owl_rate',
+]);
+const DURATION_KEYS = new Set(['reply_median_ms', 'reply_p90_ms']);
+
+/** A duration in the largest unit that keeps it a whole number above zero. Every number it prints is in `printable`. */
+function sayDuration(ms: number): string {
+  if (ms < MINUTE_MS) return `${Math.round(ms / SECOND_MS)} seconds`;
+  if (ms < HOUR_MS) return `${Math.round(ms / MINUTE_MS)} minutes`;
+  return `${Math.round(ms / HOUR_MS)} hours`;
+}
+
+/** How a writer may print one metric. The text only uses numbers the verifier accepts. */
+function sayMetric(key: string, value: number): string {
+  if (RATE_KEYS.has(key)) return `${Math.round(value * 100)}%`;
+  if (DURATION_KEYS.has(key)) return sayDuration(value);
+  if (key === 'longest_streak_days') return `${Math.round(value)} days`;
+  return String(Math.round(value));
+}
+
+/**
+ * The facts a writer may use, one per line as `ref = how to write it`. The writer copies the value
+ * instead of converting units, so the numbers it prints are the numbers the verifier accepts.
+ */
+export function factsForModel(metrics: ChatMetrics, personIds: Record<string, string>): string {
+  const lines: string[] = [];
+  const fact = (ref: string, key: string, value: number | null) => {
+    if (value !== null && Number.isFinite(value)) lines.push(`${ref} = ${sayMetric(key, value)}`);
+  };
+
+  fact('chat.total_messages', 'total_messages', metrics.totalMessages);
+  fact('chat.total_words', 'total_words', metrics.totalWords);
+  fact('chat.conversations', 'conversations', metrics.conversations);
+  fact('chat.longest_streak_days', 'longest_streak_days', metrics.longestStreakDays);
+
+  for (const [name, id] of Object.entries(personIds)) {
+    const person = metrics.people[name];
+    if (!person) continue;
+    for (const [key, value] of Object.entries(personValues(person))) fact(`${id}.${key}`, key, value);
+  }
+  return lines.join('\n');
 }

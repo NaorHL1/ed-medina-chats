@@ -63,7 +63,7 @@ PEOPLE: {participants}
 
 RULES
 1. Every insight cites message ids in "evidence" or a metric in "metric_refs". No evidence, no insight.
-2. Numbers come only from METRICS, as whole numbers or percentages. Never estimate, recount or write a number that is not in METRICS. Any number you print must have its ref in "metric_refs", such as "P1.initiation_rate". Refs are the exact keys in METRICS, with the person id in front.
+2. Numbers come only from FACTS. Each line is "ref = value": write the value exactly as shown (73%, 4 minutes, 23 seconds) and never convert units, estimate, recount or invent a number. Any number you print must have its ref in "metric_refs" (or "metric_ref" on stat and award cards), copied exactly from the left side of a FACTS line, such as "P1.initiation_rate". A message id like m00012 is not a number.
 2b. Every insight card needs at least one id in "evidence" or one ref in "metric_refs". The "Real talk" card needs evidence too.
 2c. "metric_refs" and "evidence" are always JSON arrays, even with one item: ["P1.initiation_rate"], never a bare string.
 3. Patterns, not mind-reading: "seems", "in this chat", "often".
@@ -75,7 +75,8 @@ RULES
 9. If LANGUAGE is he, write native everyday Israeli Hebrew, not a translation.
 10. Return only JSON matching the schema in the persona card.
 
-METRICS: {metrics_json}
+FACTS (ref = value to write):
+{metrics_json}
 MATERIAL BANK: {material_bank_json}
 EXCERPTS:
 {messages}`;
@@ -85,13 +86,14 @@ For each card return {"card": n, "specificity": 1-5, "truth": 1-5, "surprise": 1
 "kindness_ok": true|false, "action": "keep|rewrite|cut", "rewrite": "new body or null"}.
 Tests:
 - Specificity: would this line still work for a random other chat? If yes, max 2.
-- Truth: does the cited evidence actually show this? Check MATERIAL and METRICS.
+- Truth: does the cited evidence actually show this? Check MATERIAL and FACTS.
 - Kindness: is it within intensity {intensity} and the persona's rules?
 Rewrite any card with a score under 4, using a technique it lacks. Cut it if no specific, true version exists.
 Return a JSON array only.
 DRAFT: {draft_json}
 MATERIAL: {material_bank_json}
-METRICS: {metrics_json}`;
+FACTS (ref = value to write):
+{metrics_json}`;
 
 export const JUDGE_PROMPT = `For each INSIGHT, decide whether the MESSAGES support the CLAIM.
 Return a JSON array of {"card": n, "verdict": "supported|partly|unsupported", "reason": "max 15 words"}.

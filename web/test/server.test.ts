@@ -213,6 +213,25 @@ describe('reports', () => {
     expect(() => createReport(userId, chat.id, 'full_read', { client })).toThrow(/transcript was deleted/);
   });
 
+  it('fails a report the checks left nearly empty, and keeps the chat so it can be retried', async () => {
+    const session = await signIn('thin@example.com');
+    const userId = sessionUser(session)!.id;
+    const chat = createChat(userId, 'Chat', [message(1), message(2)]);
+    markPaid(createPurchase(userId, chat.id, 'chat_pass'), 'ref');
+    const thin = { report_type: 'full_read', language: 'en', headline: 'Thin', cards: [{ kind: 'chart', chart: 'x' }], people: [], followups: [] };
+    const client: ModelClient = {
+      complete: async (stage) =>
+        stage === 'extractor' ? JSON.stringify({ moments: [], care_flags: [] }) : stage === 'writer' ? JSON.stringify(thin) : '[]',
+    };
+
+    const report = createReport(userId, chat.id, 'full_read', { client });
+    await drainQueue();
+    const stored = getReport(userId, report.id);
+    expect(stored?.status).toBe('failed');
+    expect(stored?.error).toBe('not_enough_cards');
+    expect(getChat(userId, chat.id)?.messages).not.toBeNull();
+  });
+
   it('hides another user’s report', async () => {
     const owner = sessionUser(await signIn('a@example.com'))!.id;
     const other = sessionUser(await signIn('b@example.com'))!.id;

@@ -139,23 +139,42 @@ function checkCard(card: Card, ctx: VerifyContext, transcript: TranscriptIndex):
   return null;
 }
 
-function reportLevelIssues(report: Report, ctx: VerifyContext): string[] {
+/** Problems with one piece of text outside the cards: a banned phrase or a number no metric supports. */
+function textIssues(text: string, ctx: VerifyContext): string[] {
   const issues: string[] = [];
+  const banned = ctx.bannedPhrases.find((phrase) => normalize(text).includes(normalize(phrase)));
+  if (banned) issues.push(`banned phrase "${banned}" in headline, people or follow-ups`);
+  for (const n of printedNumbers(text)) {
+    const isYear = Number.isInteger(n) && n >= YEAR_MIN && n <= YEAR_MAX;
+    if (!isYear && !ctx.registry.printable.has(n)) {
+      issues.push(`number ${n} in headline, people or follow-ups does not match any metric`);
+    }
+  }
+  return issues;
+}
+
+/**
+ * Removes the parts outside the cards that fail the same checks: a follow-up is dropped, a person's
+ * one-liner is emptied, and a headline is swapped for `fallbackHeadline`. Cards are not touched.
+ */
+export function scrubReportLevel(report: Report, ctx: VerifyContext, fallbackHeadline: string): { report: Report; issues: string[] } {
+  const clean = (text: string) => textIssues(text, ctx).length === 0;
+  const scrubbed: Report = {
+    ...report,
+    headline: clean(report.headline) ? report.headline : fallbackHeadline,
+    people: report.people.map((p) => ({ ...p, one_liner: clean(p.one_liner) && clean(p.archetype) ? p.one_liner : '' })),
+    followups: report.followups.filter(clean),
+  };
+  return { report: scrubbed, issues: reportLevelIssues(scrubbed, ctx) };
+}
+
+function reportLevelIssues(report: Report, ctx: VerifyContext): string[] {
   const texts = [
     report.headline,
     ...report.people.flatMap((p) => [p.archetype, p.one_liner]),
     ...report.followups,
   ];
-  for (const text of texts) {
-    const banned = ctx.bannedPhrases.find((phrase) => normalize(text).includes(normalize(phrase)));
-    if (banned) issues.push(`banned phrase "${banned}" in headline, people or follow-ups`);
-    for (const n of printedNumbers(text)) {
-      const isYear = Number.isInteger(n) && n >= YEAR_MIN && n <= YEAR_MAX;
-      if (!isYear && !ctx.registry.printable.has(n)) {
-        issues.push(`number ${n} in headline, people or follow-ups does not match any metric`);
-      }
-    }
-  }
+  const issues = texts.flatMap((text) => textIssues(text, ctx));
 
   const everything = [...texts, ...report.cards.flatMap(cardTexts)].join(' ');
   const emojiCount = (everything.match(EMOJI) ?? []).length;

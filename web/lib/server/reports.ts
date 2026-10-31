@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { computeMetrics } from '@engine/metrics/index';
-import { runPipeline, type ModelClient, type PipelineResult } from '@engine/pipeline/run';
+import { MIN_REPORT_CARDS, runPipeline, type ModelClient, type PipelineResult } from '@engine/pipeline/run';
 import { GroqClient } from '@engine/pipeline/groq';
 import { db } from './db';
 import { getChat, purgeTranscript } from './chats';
@@ -20,6 +20,9 @@ export interface ReportRow {
   error: string | null;
   createdAt: number;
 }
+
+/** The error code stored when the checks leave too few cards. The page shows its own wording for it. */
+export const NOT_ENOUGH_CARDS = 'not_enough_cards';
 
 export type Language = 'he' | 'en';
 
@@ -122,6 +125,11 @@ async function runJob(userId: string, reportId: string, chatId: string, reportTy
       persona,
       localResources: process.env['SUPPORT_RESOURCES'] ?? 'ERAN (Israel)',
     });
+    // A report the checks left almost empty is not shown as finished. The chat stays, so the user can try again.
+    if (result.kind === 'report' && result.report.cards.length < MIN_REPORT_CARDS) {
+      setStatus(reportId, 'failed', null, NOT_ENOUGH_CARDS);
+      return;
+    }
     setStatus(reportId, statusOf(result), result, null);
     // The report is stored, so the raw chat goes now. A failed job keeps it, so the user can retry.
     purgeTranscript(chatId);

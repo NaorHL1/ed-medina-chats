@@ -1,7 +1,7 @@
 import type { ChatMetrics } from '../metrics/index.js';
-import { buildRegistry, personValues } from '../report/registry.js';
-import { parseReport, type Card, type Report } from '../report/types.js';
-import { applyVerdicts, cardTexts, verifyReport, type Verdict, type VerifyContext } from '../report/verify.js';
+import { buildRegistry, factsForModel, personValues } from '../report/registry.js';
+import { parseReport, ReportSchemaError, type Card, type Report } from '../report/types.js';
+import { applyVerdicts, cardTexts, scrubReportLevel, verifyReport, type Verdict, type VerifyContext, type VerifyResult } from '../report/verify.js';
 import type { Message } from '../types.js';
 import {
   BANNED_PHRASES,
@@ -70,6 +70,9 @@ const CARE_FLAG_TYPES: CareFlagType[] = ['self_harm', 'threat', 'abuse_or_contro
 const MIN_SCORE = 4;
 const CRITIC_ROUNDS = 2;
 const MAX_WRITER_ATTEMPTS = 2;
+/** A report with fewer verified cards than this is not worth showing. The writer gets one more try below it. */
+export const MIN_REPORT_CARDS = 3;
+const FALLBACK_HEADLINE = { he: 'הקריאה המלאה של השיחה', en: 'The full read of this chat' } as const;
 
 type Json = Record<string, unknown>;
 const isObject = (value: unknown): value is Json => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -160,6 +163,14 @@ async function requestReport(client: ModelClient, prompt: string): Promise<Repor
     }
   }
   throw lastError;
+}
+
+/** More surviving cards wins; with equal cards, fewer report-level problems wins. */
+function isBetter(candidate: VerifyResult, current: VerifyResult): boolean {
+  if (candidate.report.cards.length !== current.report.cards.length) {
+    return candidate.report.cards.length > current.report.cards.length;
+  }
+  return candidate.issues.length < current.issues.length;
 }
 
 function labelOf(card: Card): string {
@@ -290,6 +301,8 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
   const { transcript, metrics, personIds, client } = input;
   const personIdList = Object.values(personIds);
   const modelMetrics = JSON.stringify(metricsForModel(metrics, personIds));
+  // The writer and critic copy values from this list instead of converting raw metrics themselves.
+  const facts = factsForModel(metrics, personIds);
 
   // The extractor reads the chat in chunks, so each request fits the model's input limit.
   let bank: Json = {};
@@ -343,24 +356,47 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
     for (const r of removals) removed.push({ stage, label: labelOf(report.cards[r.index]!), reason: r.reason });
   };
 
-  const draft = await requestReport(
-    client,
-    fill(WRITER_PROMPT, {
-      persona_name: input.persona.name,
-      persona_card: input.persona.card,
-      report_type: input.reportType,
-      intensity: String(input.intensity),
-      intensity_name: ['', 'Wholesome', 'Playful', 'Honest', 'Spicy', 'Roast battle'][input.intensity] ?? 'Honest',
-      language: input.language,
-      participants: personIdList.join(', '),
-      ban_list: BANNED_PHRASES.join(', '),
-      metrics_json: modelMetrics,
-      material_bank_json: JSON.stringify(bank),
-      messages: writerExcerpt(transcript, bank, personIds),
-    }),
-  );
+  const writerPrompt = fill(WRITER_PROMPT, {
+    persona_name: input.persona.name,
+    persona_card: input.persona.card,
+    report_type: input.reportType,
+    intensity: String(input.intensity),
+    intensity_name: ['', 'Wholesome', 'Playful', 'Honest', 'Spicy', 'Roast battle'][input.intensity] ?? 'Honest',
+    language: input.language,
+    participants: personIdList.join(', '),
+    ban_list: BANNED_PHRASES.join(', '),
+    metrics_json: facts,
+    material_bank_json: JSON.stringify(bank),
+    messages: writerExcerpt(transcript, bank, personIds),
+  });
 
+  let draft = await requestReport(client, writerPrompt);
   let verified = verifyReport(draft, ctx);
+
+  // Code rejected too much, or the headline broke a rule: the writer sees exactly what failed and writes again.
+  // The better of the two drafts is kept, so a repair that goes wrong never costs the first draft.
+  if (verified.report.cards.length < MIN_REPORT_CARDS || verified.issues.length > 0) {
+    const failures = [
+      ...verified.removed.map((r) => `- card "${labelOf(draft.cards[r.index]!)}": ${r.reason}`),
+      ...verified.issues.map((issue) => `- ${issue}`),
+    ];
+    try {
+      const retryDraft = await requestReport(
+        client,
+        `${writerPrompt}\n\nYOUR PREVIOUS DRAFT WAS CHECKED BY CODE. THESE PARTS FAILED:\n${failures.join('\n')}\n` +
+          'Write the whole report again. Use numbers only as written in FACTS, with their refs. Keep at least 4 cards, ' +
+          'each tied to evidence ids from EXCERPTS or refs from FACTS. A card that cannot be backed will be dropped.',
+      );
+      const retryVerified = verifyReport(retryDraft, ctx);
+      if (isBetter(retryVerified, verified)) {
+        draft = retryDraft;
+        verified = retryVerified;
+      }
+    } catch (error) {
+      // A repair that returns unusable JSON leaves the first draft in place. Other errors (network, quota) still stop the job.
+      if (!(error instanceof PipelineError) && !(error instanceof ReportSchemaError)) throw error;
+    }
+  }
   recordVerify('verify', draft, verified.removed);
   let current = verified.report;
   let criticRounds = 0;
@@ -371,7 +407,7 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
       intensity: String(input.intensity),
       draft_json: JSON.stringify(current.cards),
       material_bank_json: JSON.stringify(bank),
-      metrics_json: modelMetrics,
+      metrics_json: facts,
     });
     const scores = new Map((await completeList(client, 'critic', criticPrompt, parseCritic)).map((s) => [s.card, s]));
 
@@ -413,11 +449,12 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
     current = judged.report;
   }
 
+  const scrubbed = scrubReportLevel(current, ctx, FALLBACK_HEADLINE[input.language]);
   return {
     kind: 'report',
-    report: current,
+    report: scrubbed.report,
     removed,
-    issues: verified.issues,
+    issues: scrubbed.issues,
     criticRounds,
     droppedIds,
   };

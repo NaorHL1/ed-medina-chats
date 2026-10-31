@@ -94,6 +94,12 @@ const writerOutput = {
   followups: [],
 };
 
+const threeStats = [0, 1, 2].map((n) => ({
+  kind: 'stat',
+  metric_ref: 'P1.initiation_rate',
+  caption: `Opened 100% of conversations, take ${n === 0 ? 'one' : n === 1 ? 'two' : 'three'}.`,
+}));
+
 describe('runPipeline happy path with code checks, critic and judge', () => {
   it('removes fabricated quotes and banned phrases in code, rewrites a weak card, and keeps the rest', async () => {
     const client = new ScriptedClient({
@@ -140,12 +146,57 @@ describe('runPipeline happy path with code checks, critic and judge', () => {
 
   it('retries the writer once when its JSON fails the schema', async () => {
     const client = new ScriptedClient({
-      writer: ['not json at all', JSON.stringify({ ...writerOutput, cards: [] })],
+      writer: ['not json at all', JSON.stringify({ ...writerOutput, cards: threeStats })],
     });
     const result = await runPipeline(input(client));
     expect(result.kind).toBe('report');
     expect(client.count('writer')).toBe(2);
     expect(client.calls.filter((c) => c.stage === 'writer')[1]?.prompt).toMatch(/previous answer was rejected/);
+  });
+
+  it('gives the writer a plain FACTS list and no raw metrics', async () => {
+    const client = new ScriptedClient({ writer: [JSON.stringify({ ...writerOutput, cards: threeStats })] });
+    await runPipeline(input(client));
+    const prompt = client.calls.find((c) => c.stage === 'writer')!.prompt;
+    expect(prompt).toMatch(/P1\.initiation_rate = \d+%/);
+    expect(prompt).toMatch(/chat\.total_messages = 4/);
+    expect(prompt).not.toMatch(/longestStreakDays|doubleTextRate/);
+  });
+
+  it('asks the writer once more, with the exact failures, when too few cards survive', async () => {
+    const badNumber = { kind: 'stat', metric_ref: 'P1.initiation_rate', caption: 'Opened 77777 conversations.' };
+    const client = new ScriptedClient({
+      writer: [
+        JSON.stringify({ ...writerOutput, cards: [badNumber, badNumber] }),
+        JSON.stringify({ ...writerOutput, cards: threeStats }),
+      ],
+    });
+    const result = await runPipeline(input(client));
+    if (result.kind !== 'report') throw new Error('expected a report');
+    expect(client.count('writer')).toBe(2);
+    expect(client.calls.filter((c) => c.stage === 'writer')[1]?.prompt).toMatch(/number 77777 does not match any metric/);
+    expect(result.report.cards).toHaveLength(3);
+  });
+
+  it('keeps the first draft when the repair is worse or unusable', async () => {
+    const badNumber = { kind: 'stat', metric_ref: 'P1.initiation_rate', caption: 'Opened 77777 conversations.' };
+    const client = new ScriptedClient({
+      writer: [JSON.stringify({ ...writerOutput, cards: [threeStats[0], badNumber] }), 'nope', 'still nope'],
+    });
+    const result = await runPipeline(input(client));
+    if (result.kind !== 'report') throw new Error('expected a report');
+    expect(result.report.cards).toHaveLength(1);
+  });
+
+  it('replaces a headline and drops follow-ups that print numbers no metric supports', async () => {
+    const client = new ScriptedClient({
+      writer: [JSON.stringify({ ...writerOutput, headline: '98765 reasons', cards: threeStats, followups: ['Watch 55555 things', 'Keep talking'] })],
+    });
+    const result = await runPipeline(input(client));
+    if (result.kind !== 'report') throw new Error('expected a report');
+    expect(result.report.headline).toBe('The full read of this chat');
+    expect(result.report.followups).toEqual(['Keep talking']);
+    expect(result.issues).toEqual([]);
   });
 
   it('fails loudly when the extractor returns something that is not JSON', async () => {
