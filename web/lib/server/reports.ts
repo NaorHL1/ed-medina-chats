@@ -30,10 +30,14 @@ export interface Progress {
 }
 
 /**
- * The step of each running report. Kept in memory: the job runs in this process, and a restart
- * fails it anyway, so nothing here needs to outlive the process.
+ * Progress lives in the database, not in memory. Each route is bundled on its own, so a module-level
+ * Map written by the job is invisible to the status route, which reads it back.
  */
-const progress = new Map<string, Progress>();
+function setProgress(reportId: string, value: Progress | null): void {
+  db()
+    .prepare('UPDATE reports SET progress = ? WHERE id = ?')
+    .run(value === null ? null : JSON.stringify(value), reportId);
+}
 
 /** The error code stored when the checks leave too few cards. The page shows its own wording for it. */
 export const NOT_ENOUGH_CARDS = 'not_enough_cards';
@@ -75,11 +79,11 @@ export function createReport(userId: string, chatId: string, reportType: ReportT
 export function getReport(userId: string, reportId: string): ReportRow | null {
   const row = db()
     .prepare(
-      `SELECT reports.id, reports.chat_id, reports.report_type, reports.status, reports.result, reports.error, reports.created_at
+      `SELECT reports.id, reports.chat_id, reports.report_type, reports.status, reports.result, reports.error, reports.created_at, reports.progress
        FROM reports JOIN chats ON chats.id = reports.chat_id WHERE reports.id = ? AND chats.user_id = ?`,
     )
     .get(reportId, userId) as
-    | { id: string; chat_id: string; report_type: ReportType; status: ReportRow['status']; result: string | null; error: string | null; created_at: number }
+    | { id: string; chat_id: string; report_type: ReportType; status: ReportRow['status']; result: string | null; error: string | null; created_at: number; progress: string | null }
     | undefined;
   if (!row) return null;
   return {
@@ -90,7 +94,7 @@ export function getReport(userId: string, reportId: string): ReportRow | null {
     result: row.result ? JSON.parse(row.result) : null,
     error: row.error,
     createdAt: row.created_at,
-    progress: progress.get(row.id) ?? null,
+    progress: row.progress ? (JSON.parse(row.progress) as Progress) : null,
   };
 }
 
@@ -130,7 +134,7 @@ async function runJob(userId: string, reportId: string, chatId: string, reportTy
     };
 
     const result = await runPipeline({
-      onStep: (step, detail) => progress.set(reportId, { step, ...detail }),
+      onStep: (step, detail) => setProgress(reportId, { step, ...detail }),
       transcript: chat.messages,
       metrics,
       personIds,
@@ -141,7 +145,7 @@ async function runJob(userId: string, reportId: string, chatId: string, reportTy
       persona,
       localResources: process.env['SUPPORT_RESOURCES'] ?? 'ERAN (Israel)',
     });
-    progress.delete(reportId);
+    setProgress(reportId, null);
     // A report the checks left almost empty is not shown as finished. The chat stays, so the user can try again.
     if (result.kind === 'report' && result.report.cards.length < MIN_REPORT_CARDS) {
       // Keep why each card was removed, so a thin report can be explained and fixed without rerunning it.
@@ -152,7 +156,7 @@ async function runJob(userId: string, reportId: string, chatId: string, reportTy
     // The report is stored, so the raw chat goes now. A failed job keeps it, so the user can retry.
     purgeTranscript(chatId);
   } catch (error) {
-    progress.delete(reportId);
+    setProgress(reportId, null);
     setStatus(reportId, 'failed', null, error instanceof Error ? error.message : String(error));
   }
 }

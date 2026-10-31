@@ -51,9 +51,18 @@ CREATE TABLE IF NOT EXISTS reports (
   status TEXT NOT NULL,
   result TEXT,
   error TEXT,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  progress TEXT
 );
 `;
+
+/** Adds columns that older databases lack. Each step runs once; `CREATE TABLE IF NOT EXISTS` does not add columns. */
+function migrate(database: Database): void {
+  const reportColumns = database.prepare('PRAGMA table_info(reports)').all() as { name: string }[];
+  if (!reportColumns.some((c) => c.name === 'progress')) {
+    database.exec('ALTER TABLE reports ADD COLUMN progress TEXT');
+  }
+}
 
 let handle: Database | null = null;
 
@@ -64,6 +73,7 @@ export function db(): Database {
   handle = new DatabaseSync(path);
   handle.exec('PRAGMA foreign_keys = ON;');
   handle.exec(SCHEMA);
+  migrate(handle);
   return handle;
 }
 
