@@ -1,10 +1,11 @@
 'use client';
 
-import { useMemo, useState, type ChangeEvent } from 'react';
+import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
 import { computeMetrics } from '@engine/metrics/index';
 import { parseChat } from '@engine/parser/parse';
 import { redactMessages, type RedactionCounts } from '@engine/redact';
 import type { Message, ParseResult } from '@engine/types';
+import { api, postJson } from '../lib/api';
 import { formatDuration, formatNumber, formatPercent, type Lang } from '../lib/format';
 import { APP_NAME, STRINGS } from '../lib/i18n';
 import { useLang } from '../lib/lang';
@@ -51,8 +52,14 @@ export default function Home() {
   const [verdict, setVerdict] = useState<{ data: Verdict; me: string | null; redaction: RedactionCounts } | null>(null);
   const [redacted, setRedacted] = useState<Message[] | null>(null);
   const [adult, setAdult] = useState(false);
+  const [billing, setBilling] = useState<string | null>(null);
 
   const t = STRINGS[lang];
+
+  // The button words depend on how checkout runs: free launch, test checkout or paid.
+  useEffect(() => {
+    api<{ billing: string }>('/api/config').then((result) => setBilling(result.data?.billing ?? null));
+  }, []);
 
   const speakers = useMemo(() => (parsed ? speakersOf(parsed) : []), [parsed]);
 
@@ -100,46 +107,37 @@ export default function Home() {
   /** Saves the redacted chat and starts a Chat Pass checkout. No email: a guest session holds the chat. */
   async function saveAndUnlock() {
     if (!redacted) return;
+    if (!adult) return setError(t.errAge);
     setBusy(true);
     setError(null);
-    const signedIn = (await fetch('/api/me')).ok;
+    const signedIn = (await api('/api/me')).ok;
     if (!signedIn) {
-      const guest = await fetch('/api/guest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ageConfirmed: adult }),
-      });
+      const guest = await postJson('/api/guest', { ageConfirmed: adult });
       if (!guest.ok) {
         setBusy(false);
-        return setError(t.errAge);
+        return setError(guest.status === 400 ? t.errAge : t.errSave);
       }
     }
     await saveAndCheckout(redacted);
   }
 
   async function saveAndCheckout(messages: Message[]) {
-    setBusy(true);
-    const saved = await fetch('/api/chats', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: new Date().toLocaleDateString(), messages }),
+    const saved = await postJson<{ chat?: { id: string }; error?: string }>('/api/chats', {
+      title: new Date().toLocaleDateString(),
+      messages,
     });
-    const savedBody = (await saved.json()) as { chat?: { id: string }; error?: string };
-    if (!saved.ok || !savedBody.chat) {
+    if (!saved.ok || !saved.data?.chat) {
       setBusy(false);
-      return setError(savedBody.error ?? t.errSave);
+      return setError(saved.data?.error ?? t.errSave);
     }
-    const checkout = await fetch(`/api/chats/${savedBody.chat.id}/checkout`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tier: 'chat_pass' }),
+    const checkout = await postJson<{ url?: string; error?: string }>(`/api/chats/${saved.data.chat.id}/checkout`, {
+      tier: 'chat_pass',
     });
-    const checkoutBody = (await checkout.json()) as { url?: string; error?: string };
-    if (!checkout.ok || !checkoutBody.url) {
+    if (!checkout.ok || !checkout.data?.url) {
       setBusy(false);
-      return setError(checkoutBody.error ?? t.errSave);
+      return setError(checkout.data?.error ?? t.errCheckout);
     }
-    window.location.href = checkoutBody.url;
+    window.location.href = checkout.data.url;
   }
 
   function clearAll() {
@@ -275,14 +273,15 @@ export default function Home() {
 
           <article className="card">
             <p className="stat-title">{t.unlockTitle}</p>
-            <p className="count">{t.unlockNote}</p>
+            <p className="count">{billing === 'free' ? t.unlockNoteFree : t.unlockNote}</p>
             <label className="radio">
               <input type="checkbox" checked={adult} onChange={(e) => setAdult(e.target.checked)} />
               {t.adult}
             </label>
+            {error && <p className="error" role="alert">{error}</p>}
             <div className="actions">
-              <button type="button" className="primary" onClick={saveAndUnlock} disabled={busy || !redacted || !adult}>
-                {t.unlockButton}
+              <button type="button" className="primary" onClick={saveAndUnlock} disabled={busy || !redacted}>
+                {busy ? t.saving : billing === 'free' ? t.unlockButtonFree : t.unlockButton}
               </button>
             </div>
           </article>

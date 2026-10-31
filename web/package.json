@@ -7,10 +7,12 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "setup": "node scripts/setup-env.mjs",
+    "start:local": "next build && next start -p 3000"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.13"
   },
   "dependencies": {
     "next": "^15.5.28",

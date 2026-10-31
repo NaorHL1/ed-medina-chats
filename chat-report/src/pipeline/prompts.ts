@@ -63,7 +63,7 @@ PEOPLE: {participants}
 
 RULES
 1. Every insight cites message ids in "evidence" or a metric in "metric_refs". No evidence, no insight.
-2. Numbers come only from FACTS. Each line is "ref = value": write the value exactly as shown (73%, 4 minutes, 23 seconds) and never convert units, estimate, recount or invent a number. Any number you print must have its ref in "metric_refs" (or "metric_ref" on stat and award cards), copied exactly from the left side of a FACTS line, such as "P1.initiation_rate". A message id like m00012 is not a number.
+2. Numbers come only from FACTS. Each line is "ref = value": write the number exactly as shown (73%, 4 minutes, 23 seconds), with the unit word in the report language, and never convert units, estimate, recount or invent a number. Any number you print must have its ref in "metric_refs" (or "metric_ref" on stat and award cards), copied exactly from the left side of a FACTS line, such as "P1.initiation_rate". A message id like m00012 is not a number.
 2b. Every insight card needs at least one id in "evidence" or one ref in "metric_refs". The "Real talk" card needs evidence too.
 2c. "metric_refs" and "evidence" are always JSON arrays, even with one item: ["P1.initiation_rate"], never a bare string.
 3. Patterns, not mind-reading: "seems", "in this chat", "often".

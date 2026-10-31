@@ -14,7 +14,7 @@ export interface CheckoutStart {
 
 /** The only payment seam. The stub and Stripe implement it; nothing else talks to a payment provider. */
 export interface CheckoutProvider {
-  name: 'stub' | 'stripe';
+  name: 'stub' | 'stripe' | 'free';
   start(input: { purchaseId: string; tier: Tier; returnUrl: string }): Promise<CheckoutStart>;
   /** Returns the purchase id that was paid, or null when the event is not a completed payment. */
   parseWebhook(body: string, signature: string | null): string | null;
@@ -49,6 +49,21 @@ export const stubProvider: CheckoutProvider = {
   name: 'stub',
   async start({ purchaseId }) {
     return { url: `/api/billing/stub/complete?purchase=${purchaseId}`, providerRef: `stub_${purchaseId}` };
+  },
+  parseWebhook() {
+    return null;
+  },
+};
+
+/**
+ * Launch mode with no payment: the purchase is marked paid on the spot. It must be chosen on purpose
+ * with BILLING_MODE=free, so production never gives the full read away by accident.
+ */
+export const freeProvider: CheckoutProvider = {
+  name: 'free',
+  async start({ purchaseId, returnUrl }) {
+    markPaid(purchaseId, `free_${purchaseId}`);
+    return { url: `${returnUrl}?paid=1`, providerRef: `free_${purchaseId}` };
   },
   parseWebhook() {
     return null;
@@ -103,11 +118,18 @@ export function verifyStripeSignature(body: string, header: string | null, secre
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-/** Picks Stripe when keys are set, otherwise the stub. Production refuses the stub. */
-export function providerFromEnv(env: NodeJS.ProcessEnv = process.env): CheckoutProvider {
-  if (env['STRIPE_SECRET_KEY'] && env['STRIPE_WEBHOOK_SECRET']) {
-    return stripeProvider(env['STRIPE_SECRET_KEY'], env['STRIPE_WEBHOOK_SECRET']);
-  }
-  if (env['NODE_ENV'] === 'production') throw new Error('Set STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET in production.');
+/** How checkout runs, without creating a provider. Safe to call from a config route. */
+export function billingMode(env: Record<string, string | undefined> = process.env): 'stripe' | 'free' | 'stub' | 'unset' {
+  if (env['STRIPE_SECRET_KEY'] && env['STRIPE_WEBHOOK_SECRET']) return 'stripe';
+  if (env['BILLING_MODE'] === 'free') return 'free';
+  return env['NODE_ENV'] === 'production' ? 'unset' : 'stub';
+}
+
+/** Picks Stripe when keys are set, free launch mode when asked for, otherwise the stub. Production refuses the stub. */
+export function providerFromEnv(env: Record<string, string | undefined> = process.env): CheckoutProvider {
+  const mode = billingMode(env);
+  if (mode === 'stripe') return stripeProvider(env['STRIPE_SECRET_KEY']!, env['STRIPE_WEBHOOK_SECRET']!);
+  if (mode === 'free') return freeProvider;
+  if (mode === 'unset') throw new Error('Set BILLING_MODE=free, or STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET, in production.');
   return stubProvider;
 }

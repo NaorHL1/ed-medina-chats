@@ -1,9 +1,12 @@
 import { NextResponse } from 'next/server';
 import { getChat } from '@/lib/server/chats';
 import { CATALOG, createPurchase, providerFromEnv, type Tier } from '@/lib/server/billing';
+import { withErrors } from '@/lib/server/http';
 import { currentUser } from '@/lib/server/session';
 
-export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+type Context = { params: Promise<{ id: string }> };
+
+export const POST = withErrors<Context>(async (request, { params }) => {
   const user = await currentUser();
   if (!user) return NextResponse.json({ error: 'Sign in first.' }, { status: 401 });
   const { id } = await params;
@@ -17,4 +20,4 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const origin = new URL(request.url).origin;
   const started = await providerFromEnv().start({ purchaseId, tier, returnUrl: `${origin}/chats/${id}` });
   return NextResponse.json({ url: started.url, purchaseId });
-}
+});

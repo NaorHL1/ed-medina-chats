@@ -51,8 +51,35 @@ export interface ReportOptions {
   client?: ModelClient;
 }
 
+/** Report fields that hold words for the reader. Ids, refs and message ids stay as they are. */
+const READABLE_KEYS = new Set(['headline', 'title', 'body', 'punchline', 'caption', 'award', 'winner', 'citation', 'archetype', 'one_liner']);
+
+/**
+ * The model only ever sees ids (P1, P2). The reader should see the nicknames they chose, so each id in the
+ * words of a finished report is swapped for its nickname. Cards cite ids in separate fields that stay untouched.
+ */
+export function nameReport(result: PipelineResult, personIds: Record<string, string>): PipelineResult {
+  if (result.kind !== 'report') return result;
+  const nameOf = new Map(Object.entries(personIds).map(([name, id]) => [id, name]));
+  const swapIds = (text: string) => text.replace(/\bP\d+\b/g, (id) => nameOf.get(id) ?? id);
+
+  const walk = (node: unknown, key = ''): unknown => {
+    if (typeof node === 'string') return READABLE_KEYS.has(key) || key === 'followups' ? swapIds(node) : node;
+    if (Array.isArray(node)) return node.map((item) => walk(item, key));
+    if (node !== null && typeof node === 'object') {
+      return Object.fromEntries(Object.entries(node).map(([k, v]) => [k, walk(v, k)]));
+    }
+    return node;
+  };
+  return { ...result, report: walk(result.report) as typeof result.report };
+}
+
 export class ReportError extends Error {
   override name = 'ReportError';
+  /** The HTTP status a route answers with: 402 needs a Chat Pass, 404 no such chat, 409 the transcript is gone. */
+  constructor(message: string, readonly status: number = 400) {
+    super(message);
+  }
 }
 
 /**
@@ -62,10 +89,10 @@ export class ReportError extends Error {
 let queue: Promise<void> = Promise.resolve();
 
 export function createReport(userId: string, chatId: string, reportType: ReportType, options: ReportOptions = {}): ReportRow {
-  if (!hasChatPass(userId, chatId)) throw new ReportError('Unlock this chat with a Chat Pass first.');
+  if (!hasChatPass(userId, chatId)) throw new ReportError('Unlock this chat with a Chat Pass first.', 402);
   const chat = getChat(userId, chatId);
-  if (!chat) throw new ReportError('Chat not found.');
-  if (chat.messages === null) throw new ReportError('This chat’s transcript was deleted after its report. Upload it again to make a new one.');
+  if (!chat) throw new ReportError('Chat not found.', 404);
+  if (chat.messages === null) throw new ReportError('This chat’s transcript was deleted after its report. Upload it again to make a new one.', 409);
 
   const id = randomUUID();
   const createdAt = Date.now();
@@ -116,7 +143,12 @@ function groqFromEnv(): ModelClient {
   const apiKey = process.env['GROQ_API_KEY'];
   const model = process.env['GROQ_MODEL'];
   if (!apiKey || !model) throw new ReportError('Set GROQ_API_KEY and GROQ_MODEL on the server.');
-  return new GroqClient({ apiKey, model, minIntervalMs: Number(process.env['GROQ_MIN_INTERVAL_MS'] ?? 60_000) });
+  return new GroqClient({
+    apiKey,
+    model,
+    url: process.env['GROQ_URL'],
+    minIntervalMs: Number(process.env['GROQ_MIN_INTERVAL_MS'] ?? 60_000),
+  });
 }
 
 async function runJob(userId: string, reportId: string, chatId: string, reportType: ReportType, options: ReportOptions): Promise<void> {
@@ -152,11 +184,13 @@ async function runJob(userId: string, reportId: string, chatId: string, reportTy
       setStatus(reportId, 'failed', { removed: result.removed, issues: result.issues }, NOT_ENOUGH_CARDS);
       return;
     }
-    setStatus(reportId, statusOf(result), result, null);
+    setStatus(reportId, statusOf(result), nameReport(result, personIds), null);
     // The report is stored, so the raw chat goes now. A failed job keeps it, so the user can retry.
     purgeTranscript(chatId);
   } catch (error) {
     setProgress(reportId, null);
+    // The full reason goes to the log and the row; the page shows a plain message, never a setting name.
+    console.error(`[report ${reportId}]`, error);
     setStatus(reportId, 'failed', null, error instanceof Error ? error.message : String(error));
   }
 }

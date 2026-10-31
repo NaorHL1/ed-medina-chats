@@ -54,6 +54,11 @@ CREATE TABLE IF NOT EXISTS reports (
   created_at INTEGER NOT NULL,
   progress TEXT
 );
+CREATE TABLE IF NOT EXISTS rate_limits (
+  key TEXT PRIMARY KEY,
+  window_start INTEGER NOT NULL,
+  count INTEGER NOT NULL
+);
 `;
 
 /** Adds columns that older databases lack. Each step runs once; `CREATE TABLE IF NOT EXISTS` does not add columns. */
@@ -62,6 +67,21 @@ function migrate(database: Database): void {
   if (!reportColumns.some((c) => c.name === 'progress')) {
     database.exec('ALTER TABLE reports ADD COLUMN progress TEXT');
   }
+}
+
+/**
+ * A report job lives in the process that started it. After a restart, anything still queued or running
+ * is lost, so it is marked failed once, by the first database opened in the new process. The chat stays,
+ * and the page offers a retry.
+ */
+const SWEPT = Symbol.for('chat-report.interrupted-swept');
+function failInterruptedReports(database: Database): void {
+  const flags = globalThis as Record<symbol, boolean | undefined>;
+  if (flags[SWEPT]) return;
+  flags[SWEPT] = true;
+  database
+    .prepare(`UPDATE reports SET status = 'failed', error = 'interrupted', progress = NULL WHERE status IN ('queued', 'running')`)
+    .run();
 }
 
 let handle: Database | null = null;
@@ -74,6 +94,7 @@ export function db(): Database {
   handle.exec('PRAGMA foreign_keys = ON;');
   handle.exec(SCHEMA);
   migrate(handle);
+  failInterruptedReports(handle);
   return handle;
 }
 

@@ -5,6 +5,8 @@ const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 export interface GroqClientOptions {
   apiKey: string;
   model: string;
+  /** Any OpenAI-compatible chat completions URL. Defaults to Groq; a local stand-in server uses this too. */
+  url?: string;
   /** Injected for tests; defaults to the global fetch. */
   fetch?: typeof fetch;
   temperature?: number;
@@ -69,6 +71,9 @@ export class GroqClient implements ModelClient {
       response = await this.paced(stage, prompt);
     }
 
+    if (response.status === 401 || response.status === 403) {
+      throw new Error(`Groq rejected the API key with HTTP ${response.status}. Check GROQ_API_KEY.`);
+    }
     if (!response.ok) {
       throw new Error(`Groq ${stage} call failed with HTTP ${response.status}`);
     }
@@ -89,7 +94,7 @@ export class GroqClient implements ModelClient {
   }
 
   private post(stage: Stage, prompt: string): Promise<Response> {
-    return this.fetchImpl(GROQ_URL, {
+    return this.fetchImpl(this.options.url ?? GROQ_URL, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${this.options.apiKey}`,

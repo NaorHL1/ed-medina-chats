@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { use, useEffect, useState } from 'react';
 import { ACCOUNT_STRINGS } from '../../../lib/account-i18n';
+import { api, postJson } from '../../../lib/api';
 import type { Lang } from '../../../lib/format';
 import { useLang } from '../../../lib/lang';
 
@@ -80,12 +81,11 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    fetch(`/api/chats/${id}`).then(async (response) => {
-      if (response.status === 401) return setError(ACCOUNT_STRINGS.en.signInFirst);
-      if (!response.ok) return setError(t.notFound);
-      const body = (await response.json()) as ChatView;
-      setView(body);
-      setReport(body.report);
+    api<ChatView>(`/api/chats/${id}`).then((result) => {
+      if (result.status === 401) return setError(ACCOUNT_STRINGS.en.signInFirst);
+      if (!result.ok || !result.data) return setError(t.notFound);
+      setView(result.data);
+      setReport(result.data.report);
     });
     // Loaded once per chat; the language toggle only changes the words.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -95,9 +95,9 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
   useEffect(() => {
     if (!report || (report.status !== 'queued' && report.status !== 'running')) return;
     const timer = setTimeout(async () => {
-      const response = await fetch(`/api/reports/${report.id}`);
-      const body = (await response.json()) as { report: Report };
-      setReport(body.report);
+      const result = await api<{ report: Report }>(`/api/reports/${report.id}`);
+      // A lost connection or a server restart keeps polling; the next tick tries again.
+      setReport(result.data?.report ?? report);
     }, 3000);
     return () => clearTimeout(timer);
   }, [report]);
@@ -105,33 +105,26 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
   async function unlock() {
     setBusy(true);
     setError(null);
-    const response = await fetch(`/api/chats/${id}/checkout`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tier: 'chat_pass' }),
-    });
-    const body = (await response.json()) as { url?: string };
-    if (!response.ok || !body.url) {
+    const result = await postJson<{ url?: string }>(`/api/chats/${id}/checkout`, { tier: 'chat_pass' });
+    if (!result.ok || !result.data?.url) {
       setBusy(false);
       return setError(t.errCheckout);
     }
-    window.location.href = body.url;
+    window.location.href = result.data.url;
   }
 
   async function generate() {
     const language: Lang = reportLang ?? lang;
     setBusy(true);
     setError(null);
-    const response = await fetch(`/api/chats/${id}/reports`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reportType: 'full_read', language }),
+    const result = await postJson<{ report?: Report; error?: string }>(`/api/chats/${id}/reports`, {
+      reportType: 'full_read',
+      language,
     });
-    const body = (await response.json()) as { report?: Report; error?: string };
     setBusy(false);
-    if (response.status === 402) return setError(t.unlockFirst);
-    if (!response.ok || !body.report) return setError(body.error ?? t.errReport);
-    setReport(body.report);
+    if (result.status === 402) return setError(t.unlockFirst);
+    if (!result.ok || !result.data?.report) return setError(result.data?.error ?? t.errReport);
+    setReport(result.data.report);
   }
 
   const reportLanguage: Lang = reportLang ?? lang;
@@ -205,7 +198,11 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
 
       {report?.status === 'failed' && (
         <p className="error" role="alert">
-          {report.error === 'not_enough_cards' ? t.notEnoughCards : `${t.failed} ${report.error ?? ''}`}
+          {report.error === 'not_enough_cards'
+            ? t.notEnoughCards
+            : report.error === 'interrupted'
+              ? t.interrupted
+              : t.failedGeneric}
         </p>
       )}
 
