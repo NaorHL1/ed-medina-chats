@@ -5,7 +5,8 @@ export const APP_NAME = 'Chat Report';
 const he = {
   tagline: 'העלו שיחת וואטסאפ וקבלו קריאה כנה, מצחיקה ומבוססת עובדות.',
   errSave: 'לא הצלחנו לשמור את השיחה. נסו שוב.',
-  errSaveStorage: 'הדפדפן לא שומר את השיחה בזמן ההתחברות. נסו דפדפן אחר.',
+  adult: 'אני בן 18 ומעלה',
+  errAge: 'צריך לאשר שאתם בני 18 ומעלה.',
   unlockTitle: 'שמרו וקבלו את הקריאה המלאה',
   unlockNote: 'התחברו, שלמו פעם אחת, והשיחה תישמר מוצפנת עד שתמחקו הכול.',
   unlockButton: 'שמירה ופתיחה ב-$9.99',
@@ -52,7 +53,8 @@ const he = {
 const en: typeof he = {
   tagline: 'Upload a WhatsApp chat and get a candid, funny, fact-based read.',
   errSave: 'We could not save this chat. Try again.',
-  errSaveStorage: 'Your browser will not keep the chat while you sign in. Try another browser.',
+  adult: 'I am 18 or older',
+  errAge: 'Confirm you are 18 or older.',
   unlockTitle: 'Save and unlock the full read',
   unlockNote: 'Sign in, pay once, and the chat is stored encrypted until you delete everything.',
   unlockButton: 'Save and unlock for $9.99',

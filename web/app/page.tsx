@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
+import { useMemo, useState, type ChangeEvent } from 'react';
 import { computeMetrics } from '@engine/metrics/index';
 import { parseChat } from '@engine/parser/parse';
 import { redactMessages, type RedactionCounts } from '@engine/redact';
@@ -11,9 +11,6 @@ import { useLang } from '../lib/lang';
 import { buildVerdict, type Verdict } from '../lib/verdict';
 
 type Phase = 'upload' | 'people' | 'verdict';
-
-/** Holds a redacted upload across sign-in. It lives in this tab only and is cleared once it is saved. */
-const PENDING_KEY = 'cr_pending_upload';
 
 interface Speaker {
   name: string;
@@ -53,27 +50,9 @@ export default function Home() {
   const [nicknames, setNicknames] = useState<Record<string, string>>({});
   const [verdict, setVerdict] = useState<{ data: Verdict; me: string | null; redaction: RedactionCounts } | null>(null);
   const [redacted, setRedacted] = useState<Message[] | null>(null);
+  const [adult, setAdult] = useState(false);
 
   const t = STRINGS[lang];
-
-  // Returns from sign-in with a saved upload: save it and go on to checkout.
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('resume') !== '1') return;
-    let pending: string | null = null;
-    try {
-      pending = sessionStorage.getItem(PENDING_KEY);
-      sessionStorage.removeItem(PENDING_KEY);
-    } catch {
-      return;
-    }
-    if (!pending) return;
-    fetch('/api/me').then((response) => {
-      if (response.ok) void saveAndCheckout(JSON.parse(pending) as Message[]);
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
 
   const speakers = useMemo(() => (parsed ? speakersOf(parsed) : []), [parsed]);
 
@@ -118,21 +97,22 @@ export default function Home() {
     setPhase('verdict');
   }
 
-  /** Saves the redacted chat and starts a Chat Pass checkout. Signed-out users sign in first and resume here. */
+  /** Saves the redacted chat and starts a Chat Pass checkout. No email: a guest session holds the chat. */
   async function saveAndUnlock() {
     if (!redacted) return;
     setBusy(true);
     setError(null);
     const signedIn = (await fetch('/api/me')).ok;
     if (!signedIn) {
-      try {
-        sessionStorage.setItem(PENDING_KEY, JSON.stringify(redacted));
-      } catch {
+      const guest = await fetch('/api/guest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ageConfirmed: adult }),
+      });
+      if (!guest.ok) {
         setBusy(false);
-        return setError(t.errSaveStorage);
+        return setError(t.errAge);
       }
-      window.location.href = `/login?next=${encodeURIComponent('/?resume=1')}`;
-      return;
     }
     await saveAndCheckout(redacted);
   }
@@ -296,8 +276,12 @@ export default function Home() {
           <article className="card">
             <p className="stat-title">{t.unlockTitle}</p>
             <p className="count">{t.unlockNote}</p>
+            <label className="radio">
+              <input type="checkbox" checked={adult} onChange={(e) => setAdult(e.target.checked)} />
+              {t.adult}
+            </label>
             <div className="actions">
-              <button type="button" className="primary" onClick={saveAndUnlock} disabled={busy || !redacted}>
+              <button type="button" className="primary" onClick={saveAndUnlock} disabled={busy || !redacted || !adult}>
                 {t.unlockButton}
               </button>
             </div>

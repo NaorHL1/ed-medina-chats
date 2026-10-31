@@ -12,7 +12,7 @@ const { DatabaseSync } = process.getBuiltinModule('node:sqlite') as typeof impor
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
-  email TEXT NOT NULL UNIQUE,
+  email TEXT UNIQUE,
   created_at INTEGER NOT NULL,
   age_confirmed INTEGER NOT NULL DEFAULT 0
 );

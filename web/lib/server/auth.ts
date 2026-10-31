@@ -7,7 +7,8 @@ const SESSION_DAYS = 30;
 
 export interface SessionUser {
   id: string;
-  email: string;
+  /** Null for a guest, who signed in with no email. */
+  email: string | null;
 }
 
 /**
@@ -55,11 +56,26 @@ export function consumeLogin(token: string): string | null {
   if (!row || row.used === 1 || row.expires_at < Date.now()) return null;
   db().prepare('UPDATE login_links SET used = 1 WHERE token_hash = ?').run(tokenHash(token));
 
-  const user = upsertUser(row.email);
+  return issueSession(upsertUser(row.email).id);
+}
+
+/**
+ * Starts a guest session with no email. The cookie is the only link to the account, so chats
+ * are reachable from this browser until the cookie expires or the user deletes everything.
+ */
+export function startGuestSession(): string {
+  const id = randomUUID();
+  db()
+    .prepare('INSERT INTO users (id, email, created_at, age_confirmed) VALUES (?, NULL, ?, 1)')
+    .run(id, Date.now());
+  return issueSession(id);
+}
+
+function issueSession(userId: string): string {
   const session = newToken();
   db()
     .prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)')
-    .run(tokenHash(session), user.id, Date.now() + SESSION_DAYS * 86_400_000);
+    .run(tokenHash(session), userId, Date.now() + SESSION_DAYS * 86_400_000);
   return session;
 }
 
