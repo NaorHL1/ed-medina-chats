@@ -144,7 +144,8 @@ async function runJob(userId: string, reportId: string, chatId: string, reportTy
     progress.delete(reportId);
     // A report the checks left almost empty is not shown as finished. The chat stays, so the user can try again.
     if (result.kind === 'report' && result.report.cards.length < MIN_REPORT_CARDS) {
-      setStatus(reportId, 'failed', null, NOT_ENOUGH_CARDS);
+      // Keep why each card was removed, so a thin report can be explained and fixed without rerunning it.
+      setStatus(reportId, 'failed', { removed: result.removed, issues: result.issues }, NOT_ENOUGH_CARDS);
       return;
     }
     setStatus(reportId, statusOf(result), result, null);

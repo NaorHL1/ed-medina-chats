@@ -102,6 +102,21 @@ class TranscriptIndex {
   }
 }
 
+/**
+ * The registry name a cited ref means, or null. Models sometimes write camelCase (`P1.doubleTextRate`)
+ * or drop the `chat.` prefix (`longestStreakDays`). Those map to the real name. The value is still
+ * checked, so a wrong number stays out.
+ */
+export function canonicalRef(ref: string, registry: MetricRegistry): string | null {
+  if (registry.values.has(ref)) return ref;
+  const snake = (name: string) => name.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+  const dot = ref.indexOf('.');
+  const prefix = dot === -1 ? null : ref.slice(0, dot);
+  const name = dot === -1 ? ref : ref.slice(dot + 1);
+  const candidates = prefix === null ? [`chat.${snake(name)}`, snake(name)] : [`${prefix}.${snake(name)}`];
+  return candidates.find((c) => registry.values.has(c)) ?? null;
+}
+
 /** Code checks for one card. Returns the first reason it fails, or null when it passes. */
 function checkCard(card: Card, ctx: VerifyContext, transcript: TranscriptIndex): string | null {
   const evidence = evidenceOf(card);
@@ -114,7 +129,7 @@ function checkCard(card: Card, ctx: VerifyContext, transcript: TranscriptIndex):
     if (!transcript.hasId(id)) return `unknown evidence id ${id}`;
   }
   for (const ref of refs) {
-    if (!ctx.registry.values.has(ref)) return `unknown metric ref ${ref}`;
+    if (canonicalRef(ref, ctx.registry) === null) return `unknown metric ref ${ref}`;
   }
   if ('winner' in card && !ctx.personIds.includes(card.winner)) {
     return `unknown winner ${card.winner}`;
