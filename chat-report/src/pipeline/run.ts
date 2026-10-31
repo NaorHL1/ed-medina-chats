@@ -190,14 +190,35 @@ interface CriticScore {
   rewrite: string | null;
 }
 
-/** Models often wrap a list in an object, such as {"scores": [...]}. Takes the list, whatever its key. */
+/**
+ * Models often answer a list in another shape. Accepts the list itself, a list under any key
+ * (such as {"scores": [...]}), a single row (one card), or rows keyed by name ({"a": {"card": 0}, ...}).
+ */
 export function listOf(value: unknown, stage: Stage): unknown[] {
   if (Array.isArray(value)) return value;
   if (isObject(value)) {
+    if ('card' in value) return [value];
     const inner = Object.values(value).find(Array.isArray);
     if (inner) return inner;
+    const rows = Object.values(value);
+    if (rows.length > 0 && rows.every((row) => isObject(row) && 'card' in row)) return rows;
   }
   throw new PipelineError(`${stage} must return a JSON array`);
+}
+
+/** A critic or judge answer that fails to parse is asked again once, the same way the writer is. */
+const MAX_LIST_ATTEMPTS = 2;
+
+async function completeList<T>(client: ModelClient, stage: 'critic' | 'judge', prompt: string, parse: (value: unknown) => T): Promise<T> {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < MAX_LIST_ATTEMPTS; attempt++) {
+    try {
+      return parse(parseModelJson(await client.complete(stage, prompt), stage));
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
 }
 
 function parseCritic(value: unknown): CriticScore[] {
@@ -346,16 +367,13 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
 
   for (let round = 1; round <= CRITIC_ROUNDS && current.cards.length > 0; round++) {
     criticRounds = round;
-    const criticRaw = await client.complete(
-      'critic',
-      fill(CRITIC_PROMPT, {
-        intensity: String(input.intensity),
-        draft_json: JSON.stringify(current.cards),
-        material_bank_json: JSON.stringify(bank),
-        metrics_json: modelMetrics,
-      }),
-    );
-    const scores = new Map(parseCritic(parseModelJson(criticRaw, 'critic')).map((s) => [s.card, s]));
+    const criticPrompt = fill(CRITIC_PROMPT, {
+      intensity: String(input.intensity),
+      draft_json: JSON.stringify(current.cards),
+      material_bank_json: JSON.stringify(bank),
+      metrics_json: modelMetrics,
+    });
+    const scores = new Map((await completeList(client, 'critic', criticPrompt, parseCritic)).map((s) => [s.card, s]));
 
     const next: Card[] = [];
     current.cards.forEach((card, index) => {
@@ -387,8 +405,8 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
         personIds,
       ),
     }));
-    const judgeRaw = await client.complete('judge', fill(JUDGE_PROMPT, { claims: JSON.stringify(claims) }));
-    const judged = applyVerdicts(current, parseVerdicts(parseModelJson(judgeRaw, 'judge')));
+    const verdicts = await completeList(client, 'judge', fill(JUDGE_PROMPT, { claims: JSON.stringify(claims) }), parseVerdicts);
+    const judged = applyVerdicts(current, verdicts);
     for (const r of judged.removed) {
       removed.push({ stage: 'judge', label: labelOf(current.cards[r.index]!), reason: r.reason });
     }

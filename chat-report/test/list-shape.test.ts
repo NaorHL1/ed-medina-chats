@@ -11,6 +11,14 @@ describe('listOf', () => {
     expect(listOf({ verdicts: [{ card: 2 }] }, 'judge')).toEqual([{ card: 2 }]);
   });
 
+  it('takes a single row as a list of one', () => {
+    expect(listOf({ card: 3, specificity: 2 }, 'critic')).toEqual([{ card: 3, specificity: 2 }]);
+  });
+
+  it('takes rows keyed by name', () => {
+    expect(listOf({ first: { card: 0 }, second: { card: 1 } }, 'critic')).toEqual([{ card: 0 }, { card: 1 }]);
+  });
+
   it('rejects a value with no list in it', () => {
     expect(() => listOf({ note: 'none' }, 'critic')).toThrow(PipelineError);
     expect(() => listOf('text', 'judge')).toThrow(/judge must return a JSON array/);
