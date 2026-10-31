@@ -18,6 +18,49 @@ interface Report {
   status: 'queued' | 'running' | 'done' | 'care' | 'stopped' | 'failed';
   result: ReportResult | null;
   error: string | null;
+  progress: { step: string; done?: number; total?: number } | null;
+}
+
+/** Rough share of the job done, from the step it is on. Each step covers a fixed slice of the bar. */
+function percentOf(progress: Report['progress']): number {
+  if (!progress) return 0;
+  const { step, done = 0, total = 1 } = progress;
+  const share = total > 0 ? done / total : 0;
+  switch (step) {
+    case 'reading':
+      return 5 + share * 40;
+    case 'checking':
+      return 45;
+    case 'writing':
+      return 50;
+    case 'verifying':
+      return 60;
+    case 'critiquing':
+      return 65 + share * 20;
+    case 'judging':
+      return 90;
+    default:
+      return 0;
+  }
+}
+
+function stepLabel(progress: NonNullable<Report['progress']>, t: (typeof ACCOUNT_STRINGS)[Lang]): string {
+  switch (progress.step) {
+    case 'reading':
+      return t.stepReading(progress.done ?? 0, progress.total ?? 1);
+    case 'checking':
+      return t.stepChecking;
+    case 'writing':
+      return t.stepWriting;
+    case 'verifying':
+      return t.stepVerifying;
+    case 'critiquing':
+      return t.stepCritiquing((progress.done ?? 0) + 1, progress.total ?? 1);
+    case 'judging':
+      return t.stepJudging;
+    default:
+      return t.writing;
+  }
 }
 
 interface ChatView {
@@ -138,7 +181,27 @@ export default function ChatPage({ params }: { params: Promise<{ id: string }> }
 
       {view.unlocked && canGenerate && !view.chat.hasTranscript && <p role="status">{t.deletedAfterReport}</p>}
 
-      {report && (report.status === 'queued' || report.status === 'running') && <p role="status">{t.writing}</p>}
+      {report && (report.status === 'queued' || report.status === 'running') && (
+        <section className="card" aria-live="polite">
+          {report.status === 'queued' || !report.progress ? (
+            <p role="status">{report.status === 'queued' ? t.queued : t.writing}</p>
+          ) : (
+            <>
+              <p role="status">{stepLabel(report.progress, t)}</p>
+              <div
+                className="progress"
+                role="progressbar"
+                aria-label={t.progressLabel}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={Math.round(percentOf(report.progress))}
+              >
+                <div style={{ width: `${percentOf(report.progress)}%` }} />
+              </div>
+            </>
+          )}
+        </section>
+      )}
 
       {report?.status === 'failed' && (
         <p className="error" role="alert">

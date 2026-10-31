@@ -29,9 +29,14 @@ export interface CareFlag {
   severity: 'low' | 'medium' | 'high';
 }
 
+/** The step a report is on, reported in order. `done` is sent by the caller, after the result is stored. */
+export type ReportStep = 'reading' | 'checking' | 'writing' | 'verifying' | 'critiquing' | 'judging';
+
 export interface PipelineInput {
   /** Already redacted and aliased. Names must not reach this function. */
   transcript: Message[];
+  /** Called when a new step starts, so the page can show progress. Optional. */
+  onStep?: (step: ReportStep, detail?: { done: number; total: number }) => void;
   metrics: ChatMetrics;
   /** Maps each alias (participant name in the transcript) to its id, such as `P1`. */
   personIds: Record<string, string>;
@@ -307,7 +312,9 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
   // The extractor reads the chat in chunks, so each request fits the model's input limit.
   let bank: Json = {};
   let droppedIds = 0;
-  for (const chunk of chunkMessages(transcript, EXTRACTOR_CHUNK_SIZE)) {
+  const chunks = chunkMessages(transcript, EXTRACTOR_CHUNK_SIZE);
+  for (const [index, chunk] of chunks.entries()) {
+    input.onStep?.('reading', { done: index, total: chunks.length });
     const extractedRaw = await client.complete(
       'extractor',
       fill(EXTRACTOR_PROMPT, {
@@ -321,6 +328,7 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
     bank = mergeBanks(bank, sanitized.bank);
   }
   const flags = careFlagsOf(bank);
+  input.onStep?.('checking');
 
   if (flags.some((f) => f.type === 'minor_sexual')) {
     return { kind: 'stopped', reason: 'minor_sexual' };
@@ -370,7 +378,9 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
     messages: writerExcerpt(transcript, bank, personIds),
   });
 
+  input.onStep?.('writing');
   let draft = await requestReport(client, writerPrompt);
+  input.onStep?.('verifying');
   let verified = verifyReport(draft, ctx);
 
   // Code rejected too much, or the headline broke a rule: the writer sees exactly what failed and writes again.
@@ -403,6 +413,7 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
 
   for (let round = 1; round <= CRITIC_ROUNDS && current.cards.length > 0; round++) {
     criticRounds = round;
+    input.onStep?.('critiquing', { done: round - 1, total: CRITIC_ROUNDS });
     const criticPrompt = fill(CRITIC_PROMPT, {
       intensity: String(input.intensity),
       draft_json: JSON.stringify(current.cards),
@@ -441,6 +452,7 @@ export async function runPipeline(input: PipelineInput): Promise<PipelineResult>
         personIds,
       ),
     }));
+    input.onStep?.('judging');
     const verdicts = await completeList(client, 'judge', fill(JUDGE_PROMPT, { claims: JSON.stringify(claims) }), parseVerdicts);
     const judged = applyVerdicts(current, verdicts);
     for (const r of judged.removed) {

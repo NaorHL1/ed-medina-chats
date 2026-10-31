@@ -98,3 +98,7 @@ input[type='text'] {
 .locked { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; padding: 0; list-style: none; }
 .locked li { border: 1px dashed var(--line); border-radius: 999px; padding: 6px 12px; color: var(--muted); font-size: .9rem; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+/* Report progress: a thin bar that fills as the report moves through its steps. */
+.progress { height: 8px; border-radius: 4px; background: var(--border, #e5e5e5); overflow: hidden; margin-top: 8px; }
+.progress > div { height: 100%; background: var(--accent, #3b6ea5); transition: width .6s ease; }

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { computeMetrics } from '@engine/metrics/index';
-import { MIN_REPORT_CARDS, runPipeline, type ModelClient, type PipelineResult } from '@engine/pipeline/run';
+import { MIN_REPORT_CARDS, runPipeline, type ModelClient, type PipelineResult, type ReportStep } from '@engine/pipeline/run';
 import { GroqClient } from '@engine/pipeline/groq';
 import { db } from './db';
 import { getChat, purgeTranscript } from './chats';
@@ -19,7 +19,21 @@ export interface ReportRow {
   result: unknown;
   error: string | null;
   createdAt: number;
+  /** The step a running report is on. Null before it starts and after it finishes. */
+  progress: Progress | null;
 }
+
+export interface Progress {
+  step: ReportStep;
+  done?: number;
+  total?: number;
+}
+
+/**
+ * The step of each running report. Kept in memory: the job runs in this process, and a restart
+ * fails it anyway, so nothing here needs to outlive the process.
+ */
+const progress = new Map<string, Progress>();
 
 /** The error code stored when the checks leave too few cards. The page shows its own wording for it. */
 export const NOT_ENOUGH_CARDS = 'not_enough_cards';
@@ -55,7 +69,7 @@ export function createReport(userId: string, chatId: string, reportType: ReportT
     .prepare('INSERT INTO reports (id, chat_id, report_type, status, created_at) VALUES (?, ?, ?, ?, ?)')
     .run(id, chatId, reportType, 'queued', createdAt);
   queue = queue.then(() => runJob(userId, id, chatId, reportType, options));
-  return { id, chatId, reportType, status: 'queued', result: null, error: null, createdAt };
+  return { id, chatId, reportType, status: 'queued', result: null, error: null, createdAt, progress: null };
 }
 
 export function getReport(userId: string, reportId: string): ReportRow | null {
@@ -76,6 +90,7 @@ export function getReport(userId: string, reportId: string): ReportRow | null {
     result: row.result ? JSON.parse(row.result) : null,
     error: row.error,
     createdAt: row.created_at,
+    progress: progress.get(row.id) ?? null,
   };
 }
 
@@ -115,6 +130,7 @@ async function runJob(userId: string, reportId: string, chatId: string, reportTy
     };
 
     const result = await runPipeline({
+      onStep: (step, detail) => progress.set(reportId, { step, ...detail }),
       transcript: chat.messages,
       metrics,
       personIds,
@@ -125,6 +141,7 @@ async function runJob(userId: string, reportId: string, chatId: string, reportTy
       persona,
       localResources: process.env['SUPPORT_RESOURCES'] ?? 'ERAN (Israel)',
     });
+    progress.delete(reportId);
     // A report the checks left almost empty is not shown as finished. The chat stays, so the user can try again.
     if (result.kind === 'report' && result.report.cards.length < MIN_REPORT_CARDS) {
       setStatus(reportId, 'failed', null, NOT_ENOUGH_CARDS);
@@ -134,6 +151,7 @@ async function runJob(userId: string, reportId: string, chatId: string, reportTy
     // The report is stored, so the raw chat goes now. A failed job keeps it, so the user can retry.
     purgeTranscript(chatId);
   } catch (error) {
+    progress.delete(reportId);
     setStatus(reportId, 'failed', null, error instanceof Error ? error.message : String(error));
   }
 }

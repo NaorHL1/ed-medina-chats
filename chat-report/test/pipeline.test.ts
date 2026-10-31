@@ -178,6 +178,17 @@ describe('runPipeline happy path with code checks, critic and judge', () => {
     expect(result.report.cards).toHaveLength(3);
   });
 
+  it('reports each step in order so the page can show progress', async () => {
+    const seen: string[] = [];
+    const client = new ScriptedClient({ writer: [JSON.stringify({ ...writerOutput, cards: threeStats })] });
+    await runPipeline(input(client, { onStep: (step) => seen.push(step) }));
+    expect(seen[0]).toBe('reading');
+    expect(seen.indexOf('checking')).toBeGreaterThan(seen.indexOf('reading'));
+    expect(seen.indexOf('writing')).toBeGreaterThan(seen.indexOf('checking'));
+    expect(seen.indexOf('verifying')).toBeGreaterThan(seen.indexOf('writing'));
+    expect(seen).toContain('judging');
+  });
+
   it('keeps the first draft when the repair is worse or unusable', async () => {
     const badNumber = { kind: 'stat', metric_ref: 'P1.initiation_rate', caption: 'Opened 77777 conversations.' };
     const client = new ScriptedClient({
